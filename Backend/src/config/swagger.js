@@ -23,7 +23,7 @@ A full-featured education platform API with:
     },
     servers: [
       { url: 'http://localhost:5000/api/v1', description: 'Development' },
-      { url: 'https://api.drsallah.com/api/v1', description: 'Production' },
+      { url: `${process.env.API_URL}/api/v1`, description: 'Production' },
     ],
     components: {
       securitySchemes: {

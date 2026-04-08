@@ -1,33 +1,66 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./src/**/*.{js,jsx,ts,tsx}'],
-  darkMode: 'class',
   theme: {
     extend: {
-      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+      },
       colors: {
+        /* Brand — Udemy-style orange */
         brand: {
-          50:  '#f5f3ff',
-          100: '#ede9fe',
-          200: '#ddd6fe',
-          300: '#c4b5fd',
-          400: '#a78bfa',
-          500: '#8b5cf6',
-          600: '#7c3aed',
-          700: '#6d28d9',
-          800: '#5b21b6',
-          900: '#4c1d95',
+          50:  '#fff7ed',
+          100: '#ffedd5',
+          200: '#fed7aa',
+          300: '#fdba74',
+          400: '#fb923c',
+          500: '#f97316',
+          600: '#ea580c',
+          700: '#c2410c',
+          800: '#9a3412',
+          900: '#7c2d12',
+        },
+        /* Surface */
+        surface: {
+          0:    '#ffffff',
+          50:   '#fafafa',
+          100:  '#f5f5f5',
+          200:  '#eeeeee',
+          300:  '#e0e0e0',
+          400:  '#bdbdbd',
+          500:  '#9e9e9e',
+          600:  '#757575',
+          700:  '#616161',
+          800:  '#424242',
+          900:  '#212121',
         },
       },
+      boxShadow: {
+        'soft':   '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+        'card':   '0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+        'card-md':'0 4px 16px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04)',
+        'card-lg':'0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06)',
+        'brand':  '0 4px 14px rgba(249,115,22,0.30)',
+        'inset':  'inset 0 1px 2px rgba(0,0,0,0.06)',
+      },
+      borderRadius: {
+        'xl2': '16px',
+        'xl3': '20px',
+      },
       animation: {
-        'spin-slow': 'spin 3s linear infinite',
-        'bounce-slow': 'bounce 2s infinite',
-        'pulse-fast': 'pulse 1s ease-in-out infinite',
+        'fade-up':   'fadeUp .2s cubic-bezier(.16,1,.3,1) both',
+        'scale-in':  'scaleIn .18s cubic-bezier(.16,1,.3,1) both',
+        'slide-in':  'slideIn .22s cubic-bezier(.16,1,.3,1) both',
+        'spin-slow': 'spin 2s linear infinite',
       },
-      backgroundImage: {
-        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'hero-pattern': "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.02'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")",
+      keyframes: {
+        fadeUp:  { '0%':{ opacity:0, transform:'translateY(10px)'}, '100%':{ opacity:1, transform:'translateY(0)' } },
+        scaleIn: { '0%':{ opacity:0, transform:'scale(.97)'}, '100%':{ opacity:1, transform:'scale(1)' } },
+        slideIn: { '0%':{ opacity:0, transform:'translateX(12px)'}, '100%':{ opacity:1, transform:'translateX(0)' } },
       },
+      opacity: {
+        12: '0.12',
+      }
     },
   },
   plugins: [],
