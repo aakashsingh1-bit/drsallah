@@ -24,16 +24,23 @@ const ProtectedRoute = ({ children }) => {
 };
 
 const SplashLoader = () => (
-  <div className="min-h-screen bg-dark-900 flex items-center justify-center">
-    <div className="flex flex-col items-center gap-4">
-      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-purple-600 flex items-center justify-center text-2xl font-bold shadow-lg shadow-primary-500/30 animate-pulse">
-        DS
+  <div className="min-h-screen bg-[#f5f4f0] flex items-center justify-center">
+    <div className="flex flex-col items-center gap-5">
+      <div className="relative">
+        <div className="w-14 h-14 rounded-2xl bg-brand-600 flex items-center justify-center shadow-brand">
+          <span className="text-white font-black text-base tracking-tight">DS</span>
+        </div>
       </div>
-      <div className="flex gap-1.5">
+      <div className="flex items-center gap-1.5">
         {[0,1,2].map(i => (
-          <div key={i} className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+          <div
+            key={i}
+            className="w-2 h-2 rounded-full bg-brand-500 animate-bounce"
+            style={{ animationDelay: `${i * 0.12}s` }}
+          />
         ))}
       </div>
+      <p className="text-[13px] text-[#6a6f73] font-medium">Loading Dr. Sallah Admin...</p>
     </div>
   </div>
 );
@@ -47,23 +54,32 @@ export default function App() {
       <Toaster
         position="top-right"
         toastOptions={{
-          style: { background: '#1e1e2a', color: '#fff', border: '1px solid #3d3d58', borderRadius: '12px' },
-          success: { iconTheme: { primary: '#6366f1', secondary: '#fff' } },
+          style: {
+            background: '#1c1d1f',
+            color: '#fff',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '10px',
+            fontSize: '13px',
+            fontFamily: 'Inter, sans-serif',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.20)',
+          },
+          success: { iconTheme: { primary: '#f97316', secondary: '#fff' } },
+          error:   { iconTheme: { primary: '#ef4444', secondary: '#fff' } },
         }}
       />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route index element={<Dashboard />} />
-          <Route path="courses" element={<CoursesPage />} />
-          <Route path="courses/:id" element={<CourseDetailPage />} />
-          <Route path="users" element={<UsersPage />} />
-          <Route path="users/:id" element={<UserDetailPage />} />
-          <Route path="subscriptions" element={<SubscriptionsPage />} />
-          <Route path="security" element={<SecurityPage />} />
-          <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="analytics" element={<AnalyticsPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route index                 element={<Dashboard />} />
+          <Route path="courses"        element={<CoursesPage />} />
+          <Route path="courses/:id"    element={<CourseDetailPage />} />
+          <Route path="users"          element={<UsersPage />} />
+          <Route path="users/:id"      element={<UserDetailPage />} />
+          <Route path="subscriptions"  element={<SubscriptionsPage />} />
+          <Route path="security"       element={<SecurityPage />} />
+          <Route path="notifications"  element={<NotificationsPage />} />
+          <Route path="analytics"      element={<AnalyticsPage />} />
+          <Route path="settings"       element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
