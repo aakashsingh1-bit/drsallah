@@ -24,6 +24,7 @@ const NAV = [
   { group: 'System', items: [
     { to: '/security', label: 'Security', Icon: IconSecurity },
     { to: '/notifications', label: 'Notifications', Icon: IconBell },
+    { to: '/settings', label: 'Settings', Icon: IconSettings },
   ]},
 ];
 
@@ -51,7 +52,7 @@ function DropPanel({ open, children, width = 'w-52' }) {
 const PAGE_TITLES = {
   '/': 'Dashboard', '/analytics': 'Analytics', '/courses': 'Courses',
   '/users': 'Students', '/subscriptions': 'Subscriptions',
-  '/security': 'Security', '/notifications': 'Notifications',
+  '/security': 'Security', '/notifications': 'Notifications', '/settings': 'Settings',
 };
 
 export default function Layout() {
@@ -313,10 +314,14 @@ export default function Layout() {
               </div>
               <div className="py-1">
                 {[
-                  { label: 'My Profile', Icon: IconUser },
-                  { label: 'Settings', Icon: IconSettings },
+                  { label: 'My Profile', to: '/settings', Icon: IconUser },
+                  { label: 'Settings', to: '/settings', Icon: IconSettings },
                 ].map(item => (
-                  <button key={item.label} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-[#3d3d3d] hover:bg-[#f5f4f0] hover:text-[#1c1d1f] transition-colors">
+                  <button
+                    key={item.label}
+                    onClick={() => { navigate(item.to); setProfileOpen(false); }}
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-[#3d3d3d] hover:bg-[#f5f4f0] hover:text-[#1c1d1f] transition-colors"
+                  >
                     <item.Icon className="w-4 h-4 text-[#9e9e9e]" />
                     {item.label}
                   </button>

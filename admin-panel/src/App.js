@@ -14,6 +14,7 @@ import SubscriptionsPage from './pages/SubscriptionsPage';
 import SecurityPage from './pages/SecurityPage';
 import NotificationsPage from './pages/NotificationsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
+import SettingsPage from './pages/SettingsPage';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuthStore();
@@ -62,6 +63,7 @@ export default function App() {
           <Route path="security" element={<SecurityPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
