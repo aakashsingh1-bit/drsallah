@@ -26,7 +26,23 @@ exports.getAllCourses = async (req, res) => {
     .limit(parseInt(limit));
 
   const total = await Course.countDocuments(filter);
-  res.json({ success: true, data: courses, pagination: { total, page: +page, limit: +limit } });
+
+  // Generate signed URLs for thumbnails
+  const expirySeconds = parseInt(process.env.SIGNED_URL_EXPIRY) || 3600;
+  const coursesWithThumbnails = await Promise.all(courses.map(async (course) => {
+    const courseObj = course.toObject();
+    if (courseObj.thumbnailKey) {
+      try {
+        const { streamUrl } = await getPresignedStreamUrl(courseObj.thumbnailKey, expirySeconds);
+        courseObj.thumbnail = streamUrl;
+      } catch (err) {
+        // Keep original thumbnail URL if signed URL fails
+      }
+    }
+    return courseObj;
+  }));
+
+  res.json({ success: true, data: coursesWithThumbnails, pagination: { total, page: +page, limit: +limit } });
 };
 
 exports.getCourseById = async (req, res) => {
@@ -37,7 +53,19 @@ exports.getCourseById = async (req, res) => {
   const filter = { course: course._id };
   if (!isAdmin) filter.isPublished = true;
   const modules = await Module.find(filter).sort({ order: 1 });
-  res.json({ success: true, data: { ...course.toObject(), modules } });
+
+  const courseObj = course.toObject();
+  const expirySeconds = parseInt(process.env.SIGNED_URL_EXPIRY) || 3600;
+
+  // Generate signed URL for course thumbnail
+  if (courseObj.thumbnailKey) {
+    try {
+      const { streamUrl } = await getPresignedStreamUrl(courseObj.thumbnailKey, expirySeconds);
+      courseObj.thumbnail = streamUrl;
+    } catch (err) {}
+  }
+
+  res.json({ success: true, data: { ...courseObj, modules } });
 };
 
 exports.createCourse = async (req, res) => {
@@ -148,7 +176,23 @@ exports.getLessonsByModule = async (req, res) => {
   const filter = { module: req.params.moduleId };
   if (!isAdmin) filter.isPublished = true;
 
-  const lessons = await Lesson.find(filter).sort({ order: 1 }).select('-videoKey');
+  let lessons = await Lesson.find(filter).sort({ order: 1 }).select('-videoKey');
+
+  // If admin, include video info with signed URLs
+  if (isAdmin) {
+    const expirySeconds = parseInt(process.env.SIGNED_URL_EXPIRY) || 3600;
+    lessons = await Promise.all(lessons.map(async (lesson) => {
+      const lessonObj = lesson.toObject();
+      if (lessonObj.videoKey) {
+        try {
+          const { streamUrl } = await getPresignedStreamUrl(lessonObj.videoKey, expirySeconds);
+          lessonObj.videoUrl = streamUrl;
+        } catch (err) {}
+      }
+      return lessonObj;
+    }));
+  }
+
   res.json({ success: true, data: lessons });
 };
 
