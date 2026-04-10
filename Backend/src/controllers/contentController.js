@@ -304,13 +304,11 @@ exports.getLessonsByModule = async (req, res) => {
   const filter = { module: req.params.moduleId };
   if (!isAdmin) filter.isPublished = true;
 
-  // For admin, include videoKey; for students, exclude it completely
-  const projection = isAdmin ? '-videoBucket' : '-videoKey -videoBucket';
+  const projection = '-videoBucket';
   let lessons = await Lesson.find(filter).sort({ order: 1 }).select(projection);
   let lessonsData = lessons.map(l => l.toObject());
 
-  // For admin, generate signed video URLs
-  if (isAdmin) {
+ 
     for (let i = 0; i < lessonsData.length; i++) {
       if (lessonsData[i].videoKey) {
         lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
@@ -318,7 +316,6 @@ exports.getLessonsByModule = async (req, res) => {
       // Remove raw videoKey from response for security
       delete lessonsData[i].videoKey;
     }
-  }
 
   res.json({ success: true, data: lessonsData });
 };
