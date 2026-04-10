@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import ModuleModal from '../components/ModuleModal';
 import LessonModal from '../components/LessonModal';
 import VideoUploader from '../components/VideoUploader';
+import VideoPlayer from '../components/VideoPlayer';
 import {
   IconPlus, IconEdit, IconTrash, IconVideo, IconClock, IconCourses,
   IconChevronDown, IconChevronRight, IconCheckCircle, IconAlertCircle,
@@ -14,8 +15,8 @@ const StatusBadge = ({ published }) => published
   ? <span className="badge-green"><IconCheckCircle className="w-3 h-3" />Published</span>
   : <span className="badge-yellow"><IconAlertCircle className="w-3 h-3" />Draft</span>;
 
-const VideoStatusBadge = ({ status }) => {
-  if (status === 'ready') return <span className="badge-green"><IconCheckCircle className="w-3 h-3" />Video Ready</span>;
+const VideoStatusBadge = ({ status, videoUrl }) => {
+  if (status === 'ready') return <span className="badge-green"><IconCheckCircle className="w-3 h-3" />{videoUrl ? 'Video Ready' : 'Ready'}</span>;
   if (status === 'pending') return <span className="badge-yellow">Uploading...</span>;
   return <span className="badge-gray">No Video</span>;
 };
@@ -30,6 +31,7 @@ export default function CourseDetailPage() {
   const [modModal, setModModal] = useState({ open: false, data: null });
   const [lesModal, setLesModal] = useState({ open: false, data: null, moduleId: null });
   const [vidUpload, setVidUpload] = useState({ open: false, lesson: null });
+  const [player, setPlayer] = useState({ open: false, url: null, title: '' });
 
   const fetchAll = async () => {
     setLoading(true);
@@ -156,11 +158,23 @@ export default function CourseDetailPage() {
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-medium text-[#1c1d1f] truncate">{les.title}</p>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <VideoStatusBadge status={les.uploadStatus} />
+                          <VideoStatusBadge status={les.uploadStatus} videoUrl={les.videoUrl} />
                           {les.duration > 0 && <span className="text-[10px] text-[#9e9e9e] flex items-center gap-1"><IconClock className="w-3 h-3" />{fmt(les.duration)}</span>}
+                          {les.videoSize > 0 && <span className="text-[10px] text-[#9e9e9e]">({(les.videoSize / (1024*1024)).toFixed(1)} MB)</span>}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {les.videoUrl && (
+                          <button
+                            onClick={() => setPlayer({ open: true, url: les.videoUrl, title: les.title })}
+                            title="Play Video"
+                            className="btn-icon w-7 h-7 rounded-lg hover:text-brand-600 bg-emerald-50"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
+                            </svg>
+                          </button>
+                        )}
                         <button onClick={() => setVidUpload({ open: true, lesson: les })}
                           className="text-[11px] font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 px-2.5 py-1.5 rounded-md transition-colors border border-blue-200 flex items-center gap-1">
                           <IconVideo className="w-3.5 h-3.5" />Upload
@@ -188,6 +202,7 @@ export default function CourseDetailPage() {
       {modModal.open && <ModuleModal courseId={id} module={modModal.data} onClose={() => setModModal({ open: false, data: null })} onSaved={() => { setModModal({ open: false, data: null }); fetchAll(); }} />}
       {lesModal.open && <LessonModal moduleId={lesModal.moduleId} lesson={lesModal.data} onClose={() => setLesModal({ open: false, data: null, moduleId: null })} onSaved={() => { const mid = lesModal.moduleId; setLesModal({ open: false, data: null, moduleId: null }); fetchLessons(mid); fetchAll(); }} />}
       {vidUpload.open && <VideoUploader lesson={vidUpload.lesson} onClose={() => setVidUpload({ open: false, lesson: null })} onUploaded={() => { const les = vidUpload.lesson; setVidUpload({ open: false, lesson: null }); if (les) fetchLessons(les.module); }} />}
+      {player.open && <VideoPlayer videoUrl={player.url} title={player.title} onClose={() => setPlayer({ open: false, url: null, title: '' })} />}
     </div>
   );
 }

@@ -304,22 +304,23 @@ exports.getLessonsByModule = async (req, res) => {
   const filter = { module: req.params.moduleId };
   if (!isAdmin) filter.isPublished = true;
 
-  let lessons = await Lesson.find(filter).sort({ order: 1 }).select('-videoKey -videoBucket');
+  // For admin, include videoKey; for students, exclude it completely
+  const projection = isAdmin ? '-videoBucket' : '-videoKey -videoBucket';
+  let lessons = await Lesson.find(filter).sort({ order: 1 }).select(projection);
+  let lessonsData = lessons.map(l => l.toObject());
 
-  // For admin, include signed video URLs
+  // For admin, generate signed video URLs
   if (isAdmin) {
-    lessons = await Promise.all(
-      lessons.map(async (l) => {
-        const obj = l.toObject();
-        if (obj.videoKey) {
-          obj.videoUrl = await safeSignedUrl(obj.videoKey, EXPIRY()) || null;
-        }
-        return obj;
-      })
-    );
+    for (let i = 0; i < lessonsData.length; i++) {
+      if (lessonsData[i].videoKey) {
+        lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
+      }
+      // Remove raw videoKey from response for security
+      delete lessonsData[i].videoKey;
+    }
   }
 
-  res.json({ success: true, data: lessons });
+  res.json({ success: true, data: lessonsData });
 };
 
 // GET /lessons/:id
@@ -442,6 +443,7 @@ exports.uploadVideoDirectly = async (req, res) => {
   const lesson = await Lesson.findById(lessonId);
   if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
 
+  // Delete old video if exists
   if (lesson.videoKey) {
     try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
   }
@@ -449,9 +451,18 @@ exports.uploadVideoDirectly = async (req, res) => {
   const key = s3Service.generateS3Key(`videos/${lesson.course}/${lessonId}`, req.file.originalname);
   await s3Service.uploadToS3(req.file.buffer, key, req.file.mimetype);
 
+  // Get duration from form data (sent from frontend)
+  const duration = req.body.duration ? parseInt(req.body.duration) : 0;
+
+  // Update lesson with video key, size and duration
   const updated = await Lesson.findByIdAndUpdate(
     lessonId,
-    { videoKey: key, uploadStatus: 'ready' },
+    { 
+      videoKey: key, 
+      uploadStatus: 'ready',
+      videoSize: req.file.size,
+      duration: duration,
+    },
     { new: true }
   );
 
