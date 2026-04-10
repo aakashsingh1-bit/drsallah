@@ -61,14 +61,23 @@ exports.getCourseById = async (req, res) => {
   const moduleFilter = { course: course._id };
   if (!isAdmin) moduleFilter.isPublished = true;
 
+  // Get modules with actual lesson counts
   const modules = await Module.find(moduleFilter).sort({ order: 1 });
+  const modulesWithCounts = await Promise.all(
+    modules.map(async (mod) => {
+      const modObj = mod.toObject();
+      const lessonCount = await Lesson.countDocuments({ module: mod._id });
+      modObj.totalLessons = lessonCount;
+      return modObj;
+    })
+  );
 
   const courseObj = course.toObject();
   if (courseObj.thumbnailKey) {
     courseObj.thumbnail = await safeSignedUrl(courseObj.thumbnailKey, EXPIRY()) || courseObj.thumbnail;
   }
 
-  res.json({ success: true, data: { ...courseObj, modules } });
+  res.json({ success: true, data: { ...courseObj, modules: modulesWithCounts } });
 };
 
 // GET /courses/:id/content  — FULL: course + modules + lessons per module
@@ -214,7 +223,18 @@ exports.getModulesByCourse = async (req, res) => {
   if (!isAdmin) filter.isPublished = true;
 
   const modules = await Module.find(filter).sort({ order: 1 });
-  res.json({ success: true, data: modules });
+
+  // Get actual lesson counts for each module
+  const modulesWithCounts = await Promise.all(
+    modules.map(async (mod) => {
+      const modObj = mod.toObject();
+      const lessonCount = await Lesson.countDocuments({ module: mod._id });
+      modObj.totalLessons = lessonCount;
+      return modObj;
+    })
+  );
+
+  res.json({ success: true, data: modulesWithCounts });
 };
 
 // GET /modules/:moduleId/with-lessons
@@ -284,7 +304,21 @@ exports.getLessonsByModule = async (req, res) => {
   const filter = { module: req.params.moduleId };
   if (!isAdmin) filter.isPublished = true;
 
-  const lessons = await Lesson.find(filter).sort({ order: 1 }).select('-videoKey -videoBucket');
+  let lessons = await Lesson.find(filter).sort({ order: 1 }).select('-videoKey -videoBucket');
+
+  // For admin, include signed video URLs
+  if (isAdmin) {
+    lessons = await Promise.all(
+      lessons.map(async (l) => {
+        const obj = l.toObject();
+        if (obj.videoKey) {
+          obj.videoUrl = await safeSignedUrl(obj.videoKey, EXPIRY()) || null;
+        }
+        return obj;
+      })
+    );
+  }
+
   res.json({ success: true, data: lessons });
 };
 
