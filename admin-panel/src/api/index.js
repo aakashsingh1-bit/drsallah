@@ -137,6 +137,7 @@ export const purchasesAPI = {
   getMy: () => api.get('/course-purchases/my'),
   createCheckout: (courseId, data) => api.post(`/courses/${courseId}/purchase/checkout`, data),
   createPaymentIntent: (courseId, data) => api.post(`/courses/${courseId}/purchase/payment-intent`, data),
+  confirmPayment: (courseId, data) => api.post(`/courses/${courseId}/purchase/confirm`, data),
 };
 
 // ── Course Reviews ──────────────────────────────────────────────

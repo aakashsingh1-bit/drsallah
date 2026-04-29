@@ -217,6 +217,83 @@ exports.createCoursePaymentIntent = async (req, res) => {
   });
 };
 
+/**
+ * POST /courses/:courseId/purchase/confirm
+ * Mobile app calls this AFTER the PaymentIntent succeeds on the client side.
+ * This confirms the payment and activates the purchase directly,
+ * without relying on the Stripe webhook.
+ */
+exports.confirmCoursePayment = async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    return res.status(500).json({ success: false, message: 'Stripe is not configured' });
+  }
+
+  const { paymentIntentId } = req.body;
+  if (!paymentIntentId) {
+    return res.status(400).json({ success: false, message: 'paymentIntentId is required' });
+  }
+
+  // Find the pending purchase
+  const purchase = await CoursePurchase.findOne({
+    stripePaymentIntentId: paymentIntentId,
+    user: req.user._id,
+    status: 'pending',
+  });
+  if (!purchase) {
+    return res.status(404).json({ success: false, message: 'Purchase not found or already activated' });
+  }
+
+  // Verify the PaymentIntent status with Stripe
+  try {
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    if (paymentIntent.status !== 'succeeded') {
+      return res.status(400).json({
+        success: false,
+        message: `Payment has not succeeded yet. Current status: ${paymentIntent.status}`,
+      });
+    }
+
+    // Activate the purchase
+    const startDate = new Date();
+    purchase.status = 'active';
+    purchase.startDate = startDate;
+    purchase.endDate = addMonths(startDate, purchase.months);
+    await purchase.save();
+
+    await Promise.all([
+      Course.findByIdAndUpdate(purchase.course, { $inc: { totalEnrolled: 1 } }),
+      Notification.create({
+        user: purchase.user,
+        title: 'Course Access Active',
+        body: 'Your course purchase is active. Enjoy learning!',
+        type: 'general',
+      }),
+      SecurityLog.create({
+        user: purchase.user,
+        event: 'course_purchase_activated',
+        details: {
+          courseId: purchase.course,
+          purchaseId: purchase._id,
+          endDate: purchase.endDate,
+          source: 'payment_intent_confirm',
+        },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        purchaseId: purchase._id,
+        endDate: purchase.endDate,
+      },
+    });
+  } catch (err) {
+    console.error('[confirmCoursePayment] Error:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const activatePurchaseFromPaymentIntent = async (paymentIntent) => {
   const purchase = await CoursePurchase.findOne({ stripePaymentIntentId: paymentIntent.id });
   if (!purchase || purchase.status === 'active') return purchase;
@@ -259,31 +336,42 @@ exports.handleStripeWebhook = async (req, res) => {
   try {
     const signature = req.headers['stripe-signature'];
     event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
+    console.log(`[Webhook] Received event: ${event.type}, ID: ${event.id}`);
   } catch (err) {
+    console.error(`[Webhook] Signature verification failed: ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  if (event.type === 'checkout.session.completed') {
-    await activatePurchaseFromSession(event.data.object);
-  }
+  try {
+    if (event.type === 'checkout.session.completed') {
+      console.log(`[Webhook] Processing checkout.session.completed: ${event.data.object.id}`);
+      await activatePurchaseFromSession(event.data.object);
+    }
 
-  if (event.type === 'checkout.session.expired') {
-    await CoursePurchase.findOneAndUpdate(
-      { stripeCheckoutSessionId: event.data.object.id, status: 'pending' },
-      { status: 'failed' }
-    );
-  }
+    if (event.type === 'checkout.session.expired') {
+      console.log(`[Webhook] Processing checkout.session.expired: ${event.data.object.id}`);
+      await CoursePurchase.findOneAndUpdate(
+        { stripeCheckoutSessionId: event.data.object.id, status: 'pending' },
+        { status: 'failed' }
+      );
+    }
 
-  // Handle PaymentIntent for mobile app payments
-  if (event.type === 'payment_intent.succeeded') {
-    await activatePurchaseFromPaymentIntent(event.data.object);
-  }
+    // Handle PaymentIntent for mobile app payments
+    if (event.type === 'payment_intent.succeeded') {
+      console.log(`[Webhook] Processing payment_intent.succeeded: ${event.data.object.id}, metadata:`, JSON.stringify(event.data.object.metadata));
+      await activatePurchaseFromPaymentIntent(event.data.object);
+    }
 
-  if (event.type === 'payment_intent.payment_failed') {
-    await CoursePurchase.findOneAndUpdate(
-      { stripePaymentIntentId: event.data.object.id, status: 'pending' },
-      { status: 'failed' }
-    );
+    if (event.type === 'payment_intent.payment_failed') {
+      console.log(`[Webhook] Processing payment_intent.payment_failed: ${event.data.object.id}`);
+      await CoursePurchase.findOneAndUpdate(
+        { stripePaymentIntentId: event.data.object.id, status: 'pending' },
+        { status: 'failed' }
+      );
+    }
+  } catch (err) {
+    console.error(`[Webhook] Error processing event ${event.type}:`, err.message, err.stack);
+    // Still return 200 to Stripe so it doesn't retry endlessly, but log the error
   }
 
   res.json({ received: true });

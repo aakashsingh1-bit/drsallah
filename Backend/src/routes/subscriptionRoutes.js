@@ -8,6 +8,7 @@ const {
 const {
   createCourseCheckoutSession,
   createCoursePaymentIntent,
+  confirmCoursePayment,
   getMyCoursePurchases,
   getAllCoursePurchases,
   createCourseReview,
@@ -236,6 +237,7 @@ router.post('/subscriptions/cancel', protect, cancelSubscription);
  */
 router.post('/courses/:courseId/purchase/checkout', protect, createCourseCheckoutSession);
 router.post('/courses/:courseId/purchase/payment-intent', protect, createCoursePaymentIntent);
+router.post('/courses/:courseId/purchase/confirm', protect, confirmCoursePayment);
 router.get('/course-purchases/my', protect, getMyCoursePurchases);
 router.get('/admin/course-purchases', protect, adminOnly, getAllCoursePurchases);
 
