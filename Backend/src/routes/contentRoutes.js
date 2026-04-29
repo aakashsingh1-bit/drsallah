@@ -705,7 +705,7 @@ router.get('/lessons/:lessonId/stream', protect, getStreamUrl);
  *   get:
  *     tags: [Video Streaming]
  *     summary: Student - Get stream URL for a FREE preview lesson (no subscription required)
- *     description: Returns stream URL for lessons marked as `isFree: true`. No subscription needed, but JWT auth is required.
+ *     description: Returns stream URL for lessons marked as isFree: true. No subscription needed, but JWT auth is required.
  *     parameters:
  *       - in: path
  *         name: lessonId
