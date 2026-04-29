@@ -697,7 +697,7 @@ router.post('/videos/upload/:lessonId', protect, adminOnly, upload.single('video
  *       404:
  *         description: Lesson not found or not published
  */
-router.get('/lessons/:lessonId/stream', protect, requireSubscription, getStreamUrl);
+router.get('/lessons/:lessonId/stream', protect, getStreamUrl);
 
 /**
  * @openapi

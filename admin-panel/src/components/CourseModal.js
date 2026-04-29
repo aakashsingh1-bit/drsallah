@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { coursesAPI } from '../api';
 import toast from 'react-hot-toast';
 import { useDropzone } from 'react-dropzone';
@@ -9,7 +9,6 @@ export default function CourseModal({ course, onClose, onSaved }) {
     description: course?.description || '',
     category: course?.category || '',
     instructor: course?.instructor || 'Dr. Sallah',
-    requiredSubscription: course?.requiredSubscription || 'monthly',
     level: course?.level || 'all',
     language: course?.language || 'Arabic',
     isPublished: course?.isPublished || false,
@@ -17,6 +16,29 @@ export default function CourseModal({ course, onClose, onSaved }) {
   const [thumb, setThumb] = useState(null);
   const [thumbPreview, setThumbPreview] = useState(course?.thumbnail || null);
   const [loading, setLoading] = useState(false);
+
+  // Price tiers state
+  const [priceTiers, setPriceTiers] = useState(() => {
+    if (course?.priceTiers?.length > 0) return course.priceTiers;
+    const defaults = [
+      { months: 1, price: 29, currency: 'AED', isActive: true },
+      { months: 3, price: 79, currency: 'AED', isActive: true },
+      { months: 6, price: 149, currency: 'AED', isActive: true },
+      { months: 12, price: 199, currency: 'AED', isActive: true },
+    ];
+    const allMonths = [];
+    for (let m = 1; m <= 12; m++) {
+      const existing = defaults.find(t => t.months === m);
+      allMonths.push(existing || { months: m, price: 0, currency: 'AED', isActive: false });
+    }
+    return allMonths;
+  });
+
+  const updatePriceTier = (months, field, value) => {
+    setPriceTiers(prev => prev.map(tier =>
+      tier.months === months ? { ...tier, [field]: value } : tier
+    ));
+  };
 
   const { getRootProps, getInputProps } = useDropzone({
     accept: { 'image/*': ['.jpg', '.jpeg', '.png', '.webp'] },
@@ -34,6 +56,7 @@ export default function CourseModal({ course, onClose, onSaved }) {
       const fd = new FormData();
       Object.entries(form).forEach(([k, v]) => fd.append(k, v));
       if (thumb) fd.append('thumbnail', thumb);
+      fd.append('priceTiers', JSON.stringify(priceTiers));
 
       if (course) {
         await coursesAPI.update(course._id, fd);
@@ -50,15 +73,21 @@ export default function CourseModal({ course, onClose, onSaved }) {
     }
   };
 
+  const formatDuration = (months) => {
+    if (months === 1) return '1 month';
+    if (months === 12) return '12 months (1 year)';
+    return `${months} months`;
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white border border-[#e8e6e0] rounded-2xl w-full max-w-xl shadow-card-lg max-h-[90vh] overflow-y-auto animate-scale-in">
+      <div className="bg-white border border-[#e8e6e0] rounded-2xl w-full max-w-2xl shadow-card-lg max-h-[90vh] overflow-y-auto animate-scale-in">
         <div className="flex items-center justify-between p-6 border-b border-[#e8e6e0] sticky top-0 bg-white z-10">
           <h2 className="text-lg font-bold text-[#1c1d1f]">{course ? 'Edit Course' : 'New Course'}</h2>
           <button onClick={onClose} className="text-[#9e9e9e] hover:text-[#1c1d1f] text-xl">×</button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
           {/* Thumbnail */}
           <div>
             <label className="field-label">Course Thumbnail</label>
@@ -117,15 +146,73 @@ export default function CourseModal({ course, onClose, onSaved }) {
             </div>
           </div>
 
-          {/* Required Subscription */}
-          <div>
-            <label className="field-label">Required Subscription</label>
-            <select className="field-select" value={form.requiredSubscription} onChange={e => setForm({...form, requiredSubscription: e.target.value})}>
-              <option value="free">Free</option>
-              <option value="monthly">Monthly</option>
-              <option value="quarterly">Quarterly</option>
-              <option value="yearly">Yearly</option>
-            </select>
+          {/* Price Tiers Section */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="field-label mb-0">Course Pricing (Per-Duration Access)</label>
+              <span className="text-[11px] text-[#6a6f73]">Set prices for different access durations</span>
+            </div>
+
+            <div className="bg-[#faf9f6] rounded-xl p-4 border border-[#e8e6e0] space-y-3">
+              {priceTiers
+                .filter(tier => tier.months <= 12)
+                .map((tier) => (
+                <div
+                  key={tier.months}
+                  className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${tier.isActive ? 'bg-white border border-[#e0ddd6]' : 'bg-transparent border border-dashed border-[#d1d0cc] opacity-60'}`}
+                >
+                  {/* Duration Badge */}
+                  <div className="w-20 flex-shrink-0">
+                    <div className={`text-xs font-bold px-2 py-1 rounded text-center ${tier.isActive ? 'bg-brand-50 text-brand-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {formatDuration(tier.months)}
+                    </div>
+                  </div>
+
+                  {/* Price Input */}
+                  <div className="flex-1 relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9e9e9e] text-sm font-medium">AED</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="field-input pl-12"
+                      value={tier.price}
+                      onChange={e => updatePriceTier(tier.months, 'price', parseFloat(e.target.value) || 0)}
+                      placeholder="0.00"
+                      disabled={!tier.isActive}
+                    />
+                  </div>
+
+                  {/* Currency */}
+                  <div className="w-20">
+                    <select
+                      className="field-select"
+                      value={tier.currency}
+                      onChange={e => updatePriceTier(tier.months, 'currency', e.target.value.toUpperCase())}
+                      disabled={!tier.isActive}
+                    >
+                      <option value="AED">AED</option>
+                    </select>
+                  </div>
+
+                  {/* Active Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => updatePriceTier(tier.months, 'isActive', !tier.isActive)}
+                    className={`p-2 rounded-lg transition-colors ${tier.isActive ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                    title={tier.isActive ? 'Active' : 'Inactive'}
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[11px] text-[#9e9e9e]">
+              Users can purchase access to this course for the selected duration. After the access period expires, they need to repurchase.
+            </p>
           </div>
 
           {/* Publish */}
@@ -138,7 +225,7 @@ export default function CourseModal({ course, onClose, onSaved }) {
             </span>
           </label>
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-3 pt-2 border-t border-[#e8e6e0]">
             <button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
             <button type="submit" className="btn-primary flex-1 justify-center" disabled={loading}>
               {loading ? 'Saving...' : course ? 'Update' : 'Create'}

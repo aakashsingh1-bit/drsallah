@@ -1,5 +1,6 @@
 const { Course, Module, Lesson } = require('../models/Content');
 const User = require('../models/User');
+const { CoursePurchase, CourseReview } = require('../models/CourseAccess');
 const SecurityLog = require('../models/SecurityLog');
 const s3Service = require('../services/s3Service');
 const { analyzeUserBehavior, detectAbnormalPlayback } = require('../services/antiPiracyService');
@@ -16,6 +17,87 @@ const safeSignedUrl = async (key, expiry = 3600) => {
 };
 
 const EXPIRY = () => parseInt(process.env.SIGNED_URL_EXPIRY) || 3600;
+
+const normalizePriceTiers = (value) => {
+  if (value === undefined) return undefined;
+  let tiers = value;
+  if (typeof tiers === 'string') {
+    try {
+      tiers = JSON.parse(tiers);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(tiers)) return [];
+
+  const seen = new Set();
+  return tiers
+    .map((tier) => ({
+      months: Number(tier.months),
+      price: Number(tier.price),
+      currency: (tier.currency || 'AED').toUpperCase(),
+      isActive: tier.isActive !== false && tier.isActive !== 'false',
+    }))
+    .filter((tier) => {
+      if (!Number.isInteger(tier.months) || tier.months < 1 || tier.months > 12) return false;
+      if (!Number.isFinite(tier.price) || tier.price < 0) return false;
+      if (seen.has(tier.months)) return false;
+      seen.add(tier.months);
+      return true;
+    })
+    .sort((a, b) => a.months - b.months);
+};
+
+const attachCourseAccess = async (courseObj, user) => {
+  if (!user || user.role === 'admin') {
+    courseObj.access = { hasAccess: true, reason: 'admin' };
+    return courseObj;
+  }
+
+  if (courseObj.requiredSubscription === 'free') {
+    courseObj.access = { hasAccess: true, reason: 'free' };
+    return courseObj;
+  }
+
+  const purchase = await CoursePurchase.findOne({
+    user: user._id,
+    course: courseObj._id,
+    status: 'active',
+    endDate: { $gte: new Date() },
+  }).sort({ endDate: -1 });
+
+  courseObj.access = {
+    hasAccess: Boolean(purchase),
+    reason: purchase ? 'purchased' : 'purchase_required',
+    endDate: purchase?.endDate,
+    purchaseId: purchase?._id,
+  };
+  return courseObj;
+};
+
+const getLastPublishedLessonId = async (courseId) => {
+  const modules = await Module.find({ course: courseId, isPublished: true }).sort({ order: 1, createdAt: 1 }).select('_id');
+  let lastLessonId = null;
+  for (const mod of modules) {
+    const lesson = await Lesson.findOne({ module: mod._id, isPublished: true }).sort({ order: -1, createdAt: -1 }).select('_id');
+    if (lesson) lastLessonId = lesson._id.toString();
+  }
+  return lastLessonId;
+};
+
+const hasActiveCoursePurchase = async (userId, courseId) => {
+  await CoursePurchase.updateMany(
+    { user: userId, course: courseId, status: 'active', endDate: { $lt: new Date() } },
+    { status: 'expired' }
+  );
+
+  return CoursePurchase.findOne({
+    user: userId,
+    course: courseId,
+    status: 'active',
+    endDate: { $gte: new Date() },
+  });
+};
 
 // ════════════════════════════════════════════════════════════════
 // COURSES
@@ -45,7 +127,7 @@ exports.getAllCourses = async (req, res) => {
       if (obj.thumbnailKey) {
         obj.thumbnail = await safeSignedUrl(obj.thumbnailKey, EXPIRY()) || obj.thumbnail;
       }
-      return obj;
+      return attachCourseAccess(obj, req.user);
     })
   );
 
@@ -76,6 +158,7 @@ exports.getCourseById = async (req, res) => {
   if (courseObj.thumbnailKey) {
     courseObj.thumbnail = await safeSignedUrl(courseObj.thumbnailKey, EXPIRY()) || courseObj.thumbnail;
   }
+  await attachCourseAccess(courseObj, req.user);
 
   res.json({ success: true, data: { ...courseObj, modules: modulesWithCounts } });
 };
@@ -95,6 +178,13 @@ exports.getCourseFullContent = async (req, res) => {
   if (courseObj.thumbnailKey) {
     courseObj.thumbnail = await safeSignedUrl(courseObj.thumbnailKey, EXPIRY()) || courseObj.thumbnail;
   }
+  await attachCourseAccess(courseObj, req.user);
+  const [lastLessonId, review] = isAdmin
+    ? [null, null]
+    : await Promise.all([
+      getLastPublishedLessonId(course._id),
+      CourseReview.findOne({ user: req.user._id, course: course._id }),
+    ]);
 
   // Get all published modules
   const moduleFilter = { course: course._id };
@@ -112,7 +202,14 @@ exports.getCourseFullContent = async (req, res) => {
         .sort({ order: 1 })
         .select('-videoKey -videoBucket'); // never expose S3 keys to client
 
-      modObj.lessons = lessons.map((l) => l.toObject());
+      modObj.lessons = lessons.map((l) => {
+        const lessonObj = l.toObject();
+        const isFinalLesson = lastLessonId && lessonObj._id.toString() === lastLessonId;
+        lessonObj.isFinalLesson = Boolean(isFinalLesson);
+        lessonObj.requiresReview = Boolean(isFinalLesson && !review);
+        lessonObj.isLocked = Boolean(isFinalLesson && !review);
+        return lessonObj;
+      });
       modObj.totalLessons = lessons.length;
       return modObj;
     })
@@ -130,6 +227,8 @@ exports.getCourseFullContent = async (req, res) => {
 // POST /courses
 exports.createCourse = async (req, res) => {
   const courseData = { ...req.body };
+  const priceTiers = normalizePriceTiers(courseData.priceTiers);
+  if (priceTiers !== undefined) courseData.priceTiers = priceTiers;
   if (req.file) {
     const result = await s3Service.uploadThumbnail(req.file.buffer, req.file.originalname);
     courseData.thumbnail = result.url;
@@ -142,6 +241,8 @@ exports.createCourse = async (req, res) => {
 // PUT /courses/:id
 exports.updateCourse = async (req, res) => {
   const updateData = { ...req.body };
+  const priceTiers = normalizePriceTiers(updateData.priceTiers);
+  if (priceTiers !== undefined) updateData.priceTiers = priceTiers;
   if (updateData.isPublished === 'true' || updateData.isPublished === true) {
     updateData.isPublished = true;
     if (!updateData.publishedAt) updateData.publishedAt = new Date();
@@ -308,11 +409,22 @@ exports.getLessonsByModule = async (req, res) => {
   let lessons = await Lesson.find(filter).sort({ order: 1 }).select(projection);
   let lessonsData = lessons.map(l => l.toObject());
 
+  const courseId = lessonsData[0]?.course;
+  const [lastLessonId, review] = (!isAdmin && courseId)
+    ? await Promise.all([
+      getLastPublishedLessonId(courseId),
+      CourseReview.findOne({ user: req.user._id, course: courseId }),
+    ])
+    : [null, null];
  
     for (let i = 0; i < lessonsData.length; i++) {
       if (lessonsData[i].videoKey) {
         lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
       }
+      const isFinalLesson = lastLessonId && lessonsData[i]._id.toString() === lastLessonId;
+      lessonsData[i].isFinalLesson = Boolean(isFinalLesson);
+      lessonsData[i].requiresReview = Boolean(isFinalLesson && !review);
+      lessonsData[i].isLocked = Boolean(isFinalLesson && !review);
       // Remove raw videoKey from response for security
       delete lessonsData[i].videoKey;
     }
@@ -324,6 +436,29 @@ exports.getLessonsByModule = async (req, res) => {
 exports.getLessonById = async (req, res) => {
   const lesson = await Lesson.findById(req.params.id).select('-videoKey -videoBucket');
   if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+
+  // Admin bypasses all access checks
+  if (req.user?.role !== 'admin') {
+    // Check course purchase access
+    const purchase = await hasActiveCoursePurchase(req.user._id, lesson.course);
+    if (!purchase) {
+      return res.status(403).json({ success: false, message: 'Active course purchase required to access this lesson' });
+    }
+
+    // Check if this is the final lesson and requires a review
+    const lastLessonId = await getLastPublishedLessonId(lesson.course);
+    if (lastLessonId && lesson._id.toString() === lastLessonId) {
+      const review = await CourseReview.findOne({ user: req.user._id, course: lesson.course });
+      if (!review) {
+        return res.status(403).json({
+          success: false,
+          message: 'You must submit a course review before accessing the final lesson',
+          requiresReview: true,
+        });
+      }
+    }
+  }
+
   res.json({ success: true, data: lesson });
 };
 
@@ -416,20 +551,24 @@ exports.confirmVideoUpload = async (req, res) => {
     return res.status(400).json({ success: false, message: 'lessonId and key are required' });
   }
 
-  const lesson = await Lesson.findByIdAndUpdate(
-    lessonId,
-    { videoKey: key, uploadStatus: 'ready', duration: Number(duration) || 0 },
-    { new: true }
-  );
-  if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+  const existing = await Lesson.findById(lessonId);
+  if (!existing) return res.status(404).json({ success: false, message: 'Lesson not found' });
 
-  if (duration) {
-    await Promise.all([
-      Course.findByIdAndUpdate(lesson.course, { $inc: { totalDuration: Number(duration) } }),
-    ]);
+  const oldDuration = existing.duration || 0;
+  const newDuration = Number(duration) || 0;
+
+  existing.videoKey = key;
+  existing.uploadStatus = 'ready';
+  existing.duration = newDuration;
+  await existing.save();
+
+  // Adjust course totalDuration: subtract old, add new
+  const durationDiff = newDuration - oldDuration;
+  if (durationDiff !== 0) {
+    await Course.findByIdAndUpdate(existing.course, { $inc: { totalDuration: durationDiff } });
   }
 
-  res.json({ success: true, message: 'Video confirmed. Lesson is ready for streaming.', data: lesson });
+  res.json({ success: true, message: 'Video confirmed. Lesson is ready for streaming.', data: existing });
 };
 
 // POST /videos/upload/:lessonId
@@ -440,6 +579,8 @@ exports.uploadVideoDirectly = async (req, res) => {
   const lesson = await Lesson.findById(lessonId);
   if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
 
+  const oldDuration = lesson.duration || 0;
+
   // Delete old video if exists
   if (lesson.videoKey) {
     try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
@@ -449,28 +590,29 @@ exports.uploadVideoDirectly = async (req, res) => {
   await s3Service.uploadToS3(req.file.buffer, key, req.file.mimetype);
 
   // Get duration from form data (sent from frontend)
-  const duration = req.body.duration ? parseInt(req.body.duration) : 0;
+  const newDuration = req.body.duration ? parseInt(req.body.duration) : 0;
 
   // Update lesson with video key, size and duration
-  const updated = await Lesson.findByIdAndUpdate(
-    lessonId,
-    { 
-      videoKey: key, 
-      uploadStatus: 'ready',
-      videoSize: req.file.size,
-      duration: duration,
-    },
-    { new: true }
-  );
+  lesson.videoKey = key;
+  lesson.uploadStatus = 'ready';
+  lesson.videoSize = req.file.size;
+  lesson.duration = newDuration;
+  await lesson.save();
 
-  res.json({ success: true, message: 'Video uploaded to S3 successfully', data: { lessonId, key, lesson: updated } });
+  // Adjust course totalDuration
+  const durationDiff = newDuration - oldDuration;
+  if (durationDiff !== 0) {
+    await Course.findByIdAndUpdate(lesson.course, { $inc: { totalDuration: durationDiff } });
+  }
+
+  res.json({ success: true, message: 'Video uploaded to S3 successfully', data: { lessonId, key, lesson } });
 };
 
 // ════════════════════════════════════════════════════════════════
 // VIDEO STREAMING
 // ════════════════════════════════════════════════════════════════
 
-// GET /lessons/:lessonId/stream  (requires subscription)
+// GET /lessons/:lessonId/stream  (requires course purchase)
 exports.getStreamUrl = async (req, res) => {
   const lesson = await Lesson.findById(req.params.lessonId);
   if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
@@ -479,6 +621,27 @@ exports.getStreamUrl = async (req, res) => {
 
   const userId = req.user._id.toString();
   const ip = req.ip;
+
+  // Check course purchase access (admin bypasses)
+  if (req.user?.role !== 'admin') {
+    const purchase = await hasActiveCoursePurchase(req.user._id, lesson.course);
+    if (!purchase) {
+      return res.status(403).json({ success: false, message: 'Active course purchase required to stream this lesson' });
+    }
+
+    // Check if this is the final lesson and requires a review
+    const lastLessonId = await getLastPublishedLessonId(lesson.course);
+    if (lastLessonId && lesson._id.toString() === lastLessonId) {
+      const review = await CourseReview.findOne({ user: req.user._id, course: lesson.course });
+      if (!review) {
+        return res.status(403).json({
+          success: false,
+          message: 'You must submit a course review before accessing the final lesson',
+          requiresReview: true,
+        });
+      }
+    }
+  }
 
   // Anti-piracy
   const { isSuspicious, uniqueIPs } = await detectAbnormalPlayback(userId, ip);
@@ -519,7 +682,7 @@ exports.getFreeLessonStream = async (req, res) => {
   const lesson = await Lesson.findById(req.params.lessonId);
   if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
   if (!lesson.isPublished) return res.status(404).json({ success: false, message: 'Lesson not available' });
-  if (!lesson.isFree) return res.status(403).json({ success: false, message: 'This lesson requires an active subscription' });
+  if (!lesson.isFree) return res.status(403).json({ success: false, message: 'This lesson is not free' });
   if (!lesson.videoKey) return res.status(400).json({ success: false, message: 'No video uploaded for this lesson' });
 
   const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY());

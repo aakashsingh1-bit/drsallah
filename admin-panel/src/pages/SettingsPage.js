@@ -260,8 +260,6 @@ export default function SettingsPage() {
                     onChange={e => handlePreferenceChange('language', e.target.value)}
                   >
                     <option value="en">English</option>
-                    <option value="ar">العربية (Arabic)</option>
-                    <option value="fr">Français (French)</option>
                     <option value="es">Español (Spanish)</option>
                   </select>
                 </div>

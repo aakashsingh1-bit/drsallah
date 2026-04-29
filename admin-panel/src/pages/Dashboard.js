@@ -34,20 +34,19 @@ const CHART = {
 
 const STAT_CARDS = s => [
   { label: 'Total Students',        value: s?.totalUsers?.toLocaleString() || '0',               change: '+12%', pos: true,  Icon: IconUsers,         iconBg: 'bg-blue-50',   iconColor: 'text-blue-600',   border: 'border-blue-100' },
-  { label: 'Active Subscriptions',  value: s?.activeSubscriptions?.toLocaleString() || '0',       change: '+8%',  pos: true,  Icon: IconSubscriptions, iconBg: 'bg-green-50',  iconColor: 'text-green-600',  border: 'border-green-100' },
   { label: 'Monthly Revenue',       value: `$${s?.monthlyRevenue?.toFixed(0) || 0}`,              change: '+5%',  pos: true,  Icon: IconTrendUp,       iconBg: 'bg-orange-50', iconColor: 'text-orange-600', border: 'border-orange-100' },
   { label: 'Total Courses',         value: s?.totalCourses || '0',        sub: `${s?.totalLessons || 0} lessons`, Icon: IconCourses,       iconBg: 'bg-violet-50', iconColor: 'text-violet-600', border: 'border-violet-100' },
+  { label: 'Course Purchases',      value: s?.activeCoursePurchases || '0', sub: `${s?.totalCoursePurchases || 0} total`, Icon: IconVideo, iconBg: 'bg-teal-50', iconColor: 'text-teal-600', border: 'border-teal-100' },
   { label: 'Critical Alerts (24h)', value: s?.criticalLogs24h || '0',      sub: 'Needs attention',    Icon: IconAlertTriangle, iconBg: 'bg-red-50',    iconColor: 'text-red-600',    border: 'border-red-100',  alert: s?.criticalLogs24h > 0 },
   { label: 'Flagged Users',         value: s?.flaggedUsers || '0',         sub: 'Require review',     Icon: IconFlag,          iconBg: 'bg-amber-50',  iconColor: 'text-amber-600',  border: 'border-amber-100' },
   { label: 'Suspended',             value: s?.suspendedUsers || '0',       sub: 'Inactive accounts',  Icon: IconSecurity,      iconBg: 'bg-rose-50',   iconColor: 'text-rose-600',   border: 'border-rose-100' },
-  { label: 'Video Lessons',         value: s?.totalLessons || '0',         sub: 'Published content',  Icon: IconVideo,         iconBg: 'bg-sky-50',    iconColor: 'text-sky-600',    border: 'border-sky-100' },
 ];
 
 const QUICK = [
   { label: 'Create New Course',  sub: 'Add course, modules & videos',   to: '/courses',       Icon: IconCourses,       iconBg: 'bg-violet-50', iconColor: 'text-violet-600', border: 'border-violet-100' },
   { label: 'Manage Students',    sub: 'View, suspend or reset devices', to: '/users',         Icon: IconUsers,         iconBg: 'bg-blue-50',   iconColor: 'text-blue-600',   border: 'border-blue-100' },
+  { label: 'Course Purchases',   sub: 'View all course purchases',      to: '/purchases',     Icon: IconVideo,         iconBg: 'bg-teal-50',   iconColor: 'text-teal-600',   border: 'border-teal-100' },
   { label: 'Security Logs',      sub: 'Review threats and alerts',      to: '/security',      Icon: IconSecurity,      iconBg: 'bg-red-50',    iconColor: 'text-red-600',    border: 'border-red-100' },
-  { label: 'Subscriptions',      sub: 'Plans, billing & revenue',       to: '/subscriptions', Icon: IconSubscriptions, iconBg: 'bg-green-50',  iconColor: 'text-green-600',  border: 'border-green-100' },
 ];
 
 export default function Dashboard() {
@@ -190,7 +189,7 @@ export default function Dashboard() {
         <div className="flex items-center justify-between mb-5">
           <div>
             <p className="section-title">Revenue</p>
-            <p className="section-sub">Monthly earnings (USD)</p>
+            <p className="section-sub">Monthly earnings (AED)</p>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[18px] font-black text-[#1c1d1f]">${totalRev.toLocaleString()}</span>

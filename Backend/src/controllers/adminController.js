@@ -2,6 +2,7 @@ const User = require('../models/User');
 const SecurityLog = require('../models/SecurityLog');
 const { Course, Lesson } = require('../models/Content');
 const { Subscription } = require('../models/Subscription');
+const { CoursePurchase } = require('../models/CourseAccess');
 const Notification = require('../models/Notification');
 
 // ──────────────────── USER MANAGEMENT ────────────────────────────────────────
@@ -148,6 +149,8 @@ exports.getDashboardStats = async (req, res) => {
     suspendedUsers,
     criticalLogs24h,
     recentUsers,
+    totalCoursePurchases,
+    activeCoursePurchases,
   ] = await Promise.all([
     User.countDocuments({ role: 'student' }),
     Subscription.countDocuments({ status: 'active' }),
@@ -160,6 +163,8 @@ exports.getDashboardStats = async (req, res) => {
       createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
     }),
     User.find({ role: 'student' }).sort({ createdAt: -1 }).limit(5).select('name email createdAt'),
+    CoursePurchase.countDocuments(),
+    CoursePurchase.countDocuments({ status: 'active', endDate: { $gte: new Date() } }),
   ]);
 
   // Revenue this month
@@ -169,6 +174,13 @@ exports.getDashboardStats = async (req, res) => {
     { $group: { _id: null, total: { $sum: '$amountPaid' } } },
   ]);
   const monthlyRevenue = revenueResult[0]?.total || 0;
+
+  // Course purchase revenue this month
+  const purchaseRevenueResult = await CoursePurchase.aggregate([
+    { $match: { createdAt: { $gte: startOfMonth }, status: { $in: ['active', 'expired'] } } },
+    { $group: { _id: null, total: { $sum: '$amountPaid' } } },
+  ]);
+  const monthlyPurchaseRevenue = purchaseRevenueResult[0]?.total || 0;
 
   res.json({
     success: true,
@@ -180,7 +192,9 @@ exports.getDashboardStats = async (req, res) => {
       flaggedUsers,
       suspendedUsers,
       criticalLogs24h,
-      monthlyRevenue,
+      monthlyRevenue: monthlyRevenue + monthlyPurchaseRevenue,
+      totalCoursePurchases,
+      activeCoursePurchases,
       recentUsers,
     },
   });

@@ -69,7 +69,13 @@ const deleteFromS3 = async (key) => {
 // ─── Upload thumbnail image ────────────────────────────────────────────────────
 const uploadThumbnail = async (buffer, originalName) => {
   const key = generateS3Key('thumbnails', originalName);
-  return uploadToS3(buffer, key, 'image/jpeg');
+  return uploadToS3(buffer , key, 'image/jpeg');
+};
+
+// ─── Upload gallery image ──────────────────────────────────────────────────────
+const uploadGalleryImage = async (buffer, originalName, mimetype = 'image/jpeg') => {
+  const key = generateS3Key('gallery', originalName);
+  return uploadToS3(buffer, key, mimetype);
 };
 
 // ─── Get presigned URL for video upload ───────────────────────────────────────
@@ -87,5 +93,6 @@ module.exports = {
   getPresignedStreamUrl,
   deleteFromS3,
   uploadThumbnail,
+  uploadGalleryImage,
   getVideoUploadUrl,
 };

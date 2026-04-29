@@ -11,10 +11,13 @@ import CourseDetailPage from './pages/CourseDetailPage';
 import UsersPage from './pages/UsersPage';
 import UserDetailPage from './pages/UserDetailPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
+import PurchasesPage from './pages/PurchasesPage';
 import SecurityPage from './pages/SecurityPage';
 import NotificationsPage from './pages/NotificationsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import SettingsPage from './pages/SettingsPage';
+import GalleryPage from './pages/GalleryPage';
+import ReviewsPage from './pages/ReviewsPage';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuthStore();
@@ -76,10 +79,13 @@ export default function App() {
           <Route path="users"          element={<UsersPage />} />
           <Route path="users/:id"      element={<UserDetailPage />} />
           <Route path="subscriptions"  element={<SubscriptionsPage />} />
+          <Route path="purchases"      element={<PurchasesPage />} />
           <Route path="security"       element={<SecurityPage />} />
           <Route path="notifications"  element={<NotificationsPage />} />
           <Route path="analytics"      element={<AnalyticsPage />} />
           <Route path="settings"       element={<SettingsPage />} />
+          <Route path="reviews"        element={<ReviewsPage />} />
+          <Route path="gallery"        element={<GalleryPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -13,6 +13,8 @@ const contentRoutes = require('./routes/contentRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const galleryRoutes = require('./routes/galleryRoutes');
+const { handleStripeWebhook } = require('./controllers/paymentController');
 
 // Middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -47,6 +49,9 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 // ─── Body Parsing ──────────────────────────────────────────────────────────────
+// Stripe webhooks must receive the raw body before JSON parsing.
+app.post('/api/v1/payments/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -82,6 +87,7 @@ app.use('/api/v1', contentRoutes);
 app.use('/api/v1', subscriptionRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1', galleryRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {

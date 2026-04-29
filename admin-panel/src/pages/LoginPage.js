@@ -30,7 +30,7 @@ const SLIDES = [
     headline: 'Grow your revenue with powerful insights',
     body: 'Track subscriptions, monitor revenue trends, understand student behavior and send targeted notifications.',
     features: ['Monthly, quarterly and yearly subscription plans', 'Revenue analytics with per-plan breakdowns', 'Broadcast push notifications to all students'],
-    stat1: { n: '$1M+',  l: 'Revenue Tracked' },
+    stat1: { n: 'AED 1M+',  l: 'Revenue Tracked' },
     stat2: { n: '99.99%', l: 'Platform Uptime' },
     Icon: IconZap,
     accent: '#6366f1',

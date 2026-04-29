@@ -19,6 +19,14 @@ const courseSchema = new mongoose.Schema(
       enum: ['monthly', 'quarterly', 'yearly', 'free'],
       default: 'monthly',
     },
+    priceTiers: [
+      {
+        months: { type: Number, min: 1, max: 12, required: true },
+        price: { type: Number, min: 0, required: true },
+        currency: { type: String, default: 'AED', uppercase: true },
+        isActive: { type: Boolean, default: true },
+      },
+    ],
     order: { type: Number, default: 0 },
     language: { type: String, default: 'Arabic' },
     level: { type: String, enum: ['beginner', 'intermediate', 'advanced', 'all'], default: 'all' },

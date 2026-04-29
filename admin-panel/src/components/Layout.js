@@ -3,10 +3,11 @@ import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import toast from 'react-hot-toast';
 import {
-  IconDashboard, IconAnalytics, IconCourses, IconUsers, IconSubscriptions,
+  IconDashboard, IconAnalytics, IconCourses, IconUsers,
   IconSecurity, IconBell, IconSearch, IconChevronDown, IconChevronLeft,
-  IconChevronRight, IconLogout, IconSettings, IconUser, IconGlobe,
-  IconCheckCircle, IconAlertCircle, IconZap, IconRefresh,
+  IconChevronRight, IconLogout, IconSettings, IconUser,
+  IconCheckCircle, IconAlertCircle, IconZap, IconRefresh, IconVideo,
+  IconImage, IconStar,
 } from './Icons';
 
 const NAV = [
@@ -16,10 +17,12 @@ const NAV = [
   ]},
   { group: 'Content', items: [
     { to: '/courses', label: 'Courses', Icon: IconCourses },
+    { to: '/gallery', label: 'Gallery', Icon: IconImage },
   ]},
   { group: 'Users', items: [
     { to: '/users', label: 'Students', Icon: IconUsers },
-    { to: '/subscriptions', label: 'Subscriptions', Icon: IconSubscriptions },
+    { to: '/purchases', label: 'Purchases', Icon: IconVideo },
+    { to: '/reviews', label: 'Reviews', Icon: IconStar },
   ]},
   { group: 'System', items: [
     { to: '/security', label: 'Security', Icon: IconSecurity },
@@ -28,10 +31,6 @@ const NAV = [
   ]},
 ];
 
-const LANGS = [
-  { code: 'en', label: 'English', abbr: 'EN' },
-  { code: 'ar', label: 'العربية', abbr: 'AR' },
-];
 
 const DEMO_NOTIFS = [
   { id: 1, Icon: IconAlertCircle, color: 'text-red-500', bg: 'bg-red-50', title: 'Screen recording attempt detected', sub: '2 minutes ago', unread: true },
@@ -51,7 +50,7 @@ function DropPanel({ open, children, width = 'w-52' }) {
 
 const PAGE_TITLES = {
   '/': 'Dashboard', '/analytics': 'Analytics', '/courses': 'Courses',
-  '/users': 'Students', '/subscriptions': 'Subscriptions',
+  '/users': 'Students', '/purchases': 'Purchases', '/reviews': 'Reviews', '/gallery': 'Gallery',
   '/security': 'Security', '/notifications': 'Notifications', '/settings': 'Settings',
 };
 
@@ -60,19 +59,15 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
-  const [langOpen, setLangOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [lang, setLang] = useState('en');
   const [notifs, setNotifs] = useState(DEMO_NOTIFS);
 
-  const langRef = useRef(null);
   const profileRef = useRef(null);
   const notifRef = useRef(null);
 
   useEffect(() => {
     const h = e => {
-      if (!langRef.current?.contains(e.target)) setLangOpen(false);
       if (!profileRef.current?.contains(e.target)) setProfileOpen(false);
       if (!notifRef.current?.contains(e.target)) setNotifOpen(false);
     };
@@ -80,7 +75,7 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  const closeAll = () => { setLangOpen(false); setProfileOpen(false); setNotifOpen(false); };
+  const closeAll = () => { setProfileOpen(false); setNotifOpen(false); };
   const unread = notifs.filter(n => n.unread).length;
 
   const handleLogout = async () => {
@@ -207,33 +202,6 @@ export default function Layout() {
             <IconSearch className="w-3.5 h-3.5 text-[#9e9e9e] flex-shrink-0" />
             <input className="bg-transparent text-[13px] text-[#1c1d1f] placeholder-[#9e9e9e] outline-none flex-1 min-w-0" placeholder="Search..." />
             <kbd className="text-[10px] text-[#b0afab] bg-white px-1.5 py-0.5 rounded border border-[#e0ddd6] font-mono hidden lg:block">⌘K</kbd>
-          </div>
-
-          {/* Language switcher */}
-          <div className="relative" ref={langRef}>
-            <button
-              onClick={() => { closeAll(); setLangOpen(!langOpen); }}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-[#6a6f73] hover:text-[#1c1d1f] hover:bg-[#f0ece4] transition-all border border-transparent hover:border-[#e0ddd6]"
-            >
-              <IconGlobe className="w-[15px] h-[15px]" />
-              <span className="hidden sm:block">{LANGS.find(l => l.code === lang)?.abbr}</span>
-              <IconChevronDown className="w-3 h-3 opacity-50" />
-            </button>
-            <DropPanel open={langOpen} width="w-36">
-              <div className="py-1.5">
-                <p className="text-[10px] font-bold text-[#9e9e9e] uppercase tracking-widest px-3 py-1.5">Language</p>
-                {LANGS.map(l => (
-                  <button
-                    key={l.code}
-                    onClick={() => { setLang(l.code); setLangOpen(false); toast.success(`Language: ${l.label}`); }}
-                    className={`w-full flex items-center justify-between px-3 py-2 text-[13px] hover:bg-[#f5f4f0] transition-colors ${lang === l.code ? 'text-brand-600 font-semibold' : 'text-[#3d3d3d]'}`}
-                  >
-                    <span>{l.label}</span>
-                    {lang === l.code && <IconCheckCircle className="w-3.5 h-3.5 text-brand-500" />}
-                  </button>
-                ))}
-              </div>
-            </DropPanel>
           </div>
 
           {/* Notifications */}

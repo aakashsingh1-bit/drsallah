@@ -132,7 +132,7 @@ export default function AnalyticsPage() {
           <div className="flex items-center justify-between mb-5">
             <div>
               <p className="section-title">Revenue</p>
-              <p className="section-sub">Monthly earnings (USD)</p>
+              <p className="section-sub">Monthly earnings (AED)</p>
             </div>
             <span className="badge-green font-bold">${totalRev.toLocaleString()} total</span>
           </div>

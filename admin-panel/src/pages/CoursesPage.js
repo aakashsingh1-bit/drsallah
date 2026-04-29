@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import CourseModal from '../components/CourseModal';
 import {
   IconPlus, IconEdit, IconTrash, IconEye,
-  IconCourses, IconVideo, IconClock, IconCheckCircle, IconAlertCircle,
+  IconCourses, IconVideo, IconClock, IconCheckCircle, IconAlertCircle, IconTrendUp,
 } from '../components/Icons';
 
 export default function CoursesPage() {
@@ -143,7 +143,7 @@ export default function CoursesPage() {
                   {course.description || 'No description provided'}
                 </p>
 
-                <div className="flex items-center gap-3 text-[11px] text-[#9e9e9e] mb-4">
+                <div className="flex items-center gap-3 text-[11px] text-[#9e9e9e] mb-2">
                   <span className="flex items-center gap-1">
                     <IconVideo className="w-3.5 h-3.5"/> {course.totalLessons} lessons
                   </span>
@@ -154,6 +154,25 @@ export default function CoursesPage() {
                     <span className="badge-gray text-[10px] py-0.5">{course.category}</span>
                   )}
                 </div>
+
+                {/* Price Tiers */}
+                {course.priceTiers?.filter(t => t.isActive).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {course.priceTiers
+                      .filter(t => t.isActive && t.price > 0)
+                      .sort((a, b) => a.months - b.months)
+                      .slice(0, 4)
+                      .map(tier => (
+                        <span key={tier.months} className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md">
+                          {tier.months === 1 ? '1mo' : tier.months === 12 ? '1yr' : `${tier.months}mo`} AED {tier.price}
+                        </span>
+                      ))
+                    }
+                    {course.priceTiers.filter(t => t.isActive && t.price > 0).length > 4 && (
+                      <span className="text-[10px] text-[#9e9e9e]">+more</span>
+                    )}
+                  </div>
+                )}
 
                 {/* Actions */}
                 <div className="flex items-center gap-1.5 pt-3 border-t border-[#f5f4f0]">

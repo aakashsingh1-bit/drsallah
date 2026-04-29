@@ -131,4 +131,32 @@ export const notificationsAPI = {
   broadcast: (data) => api.post('/admin/notifications/broadcast', data),
 };
 
+// ── Course Purchases ────────────────────────────────────────────
+export const purchasesAPI = {
+  getAll: (params) => api.get('/admin/course-purchases', { params }),
+  getMy: () => api.get('/course-purchases/my'),
+  createCheckout: (courseId, data) => api.post(`/courses/${courseId}/purchase/checkout`, data),
+  createPaymentIntent: (courseId, data) => api.post(`/courses/${courseId}/purchase/payment-intent`, data),
+};
+
+// ── Course Reviews ──────────────────────────────────────────────
+export const reviewsAPI = {
+  create: (courseId, data) => api.post(`/courses/${courseId}/review`, data),
+  getByCourse: (courseId, params) => api.get(`/courses/${courseId}/reviews`, { params }),
+  getMy: (courseId) => api.get(`/courses/${courseId}/my-review`),
+  getAllAdmin: (params) => api.get('/admin/course-reviews', { params }),
+  approve: (reviewId) => api.post(`/admin/course-reviews/${reviewId}/approve`),
+  delete: (reviewId) => api.delete(`/admin/course-reviews/${reviewId}`),
+};
+
+// ── Gallery ──────────────────────────────────────────────────────
+export const galleryAPI = {
+  getAll: (params) => api.get('/gallery', { params }),
+  getById: (id) => api.get(`/gallery/${id}`),
+  upload: (formData) => api.post('/gallery', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  uploadBulk: (formData) => api.post('/gallery/bulk', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  update: (id, data) => api.put(`/gallery/${id}`, data),
+  deleteImage: (id) => api.delete(`/gallery/${id}`),
+};
+
 export default api;

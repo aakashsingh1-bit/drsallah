@@ -6,7 +6,7 @@ const planSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     type: { type: String, enum: ['monthly', 'quarterly', 'yearly'], required: true },
     price: { type: Number, required: true },
-    currency: { type: String, default: 'USD' },
+    currency: { type: String, default: 'AED' },
     durationDays: { type: Number, required: true },
     features: [String],
     isActive: { type: Boolean, default: true },
@@ -35,7 +35,7 @@ const subscriptionSchema = new mongoose.Schema(
     paymentMethod: { type: String, enum: ['apple_iap', 'google_play', 'manual', 'card'] },
     transactionId: { type: String },
     amountPaid: { type: Number },
-    currency: { type: String, default: 'USD' },
+    currency: { type: String, default: 'AED' },
 
     // Retry logic
     retryCount: { type: Number, default: 0 },
