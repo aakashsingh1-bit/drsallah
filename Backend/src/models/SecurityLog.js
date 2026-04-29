@@ -29,6 +29,8 @@ const securityLogSchema = new mongoose.Schema(
         'subscription_created',
         'subscription_expired',
         'admin_action',
+        'course_purchase_activated',
+        'course_purchase_failed',
       ],
       required: true,
     },
