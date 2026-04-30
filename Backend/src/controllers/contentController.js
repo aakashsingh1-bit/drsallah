@@ -75,6 +75,49 @@ const attachCourseAccess = async (courseObj, user) => {
   return courseObj;
 };
 
+/**
+ * Attach rating stats (overall average + breakdown by star count) to a course object.
+ */
+const attachCourseRating = async (courseObj) => {
+  try {
+    const stats = await CourseReview.aggregate([
+      { $match: { course: courseObj._id, isApproved: true } },
+      {
+        $group: {
+          _id: null,
+          average: { $avg: '$rating' },
+          count: { $sum: 1 },
+          breakdown: {
+            $push: '$rating',
+          },
+        },
+      },
+    ]);
+
+    if (stats.length === 0) {
+      courseObj.rating = {
+        average: 0,
+        count: 0,
+        breakdown: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+      };
+      return courseObj;
+    }
+
+    const { average, count, breakdown: ratings } = stats[0];
+    const breakdown = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    ratings.forEach((r) => { if (breakdown[r] !== undefined) breakdown[r]++; });
+
+    courseObj.rating = {
+      average: Math.round(average * 10) / 10,
+      count,
+      breakdown,
+    };
+  } catch {
+    courseObj.rating = { average: 0, count: 0, breakdown: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
+  }
+  return courseObj;
+};
+
 const getLastPublishedLessonId = async (courseId) => {
   const modules = await Module.find({ course: courseId, isPublished: true }).sort({ order: 1, createdAt: 1 }).select('_id');
   let lastLessonId = null;
@@ -120,14 +163,16 @@ exports.getAllCourses = async (req, res) => {
     Course.countDocuments(filter),
   ]);
 
-  // Attach signed thumbnail URLs
+  // Attach signed thumbnail URLs + rating stats
   const data = await Promise.all(
     courses.map(async (c) => {
       const obj = c.toObject();
       if (obj.thumbnailKey) {
         obj.thumbnail = await safeSignedUrl(obj.thumbnailKey, EXPIRY()) || obj.thumbnail;
       }
-      return attachCourseAccess(obj, req.user);
+      await attachCourseAccess(obj, req.user);
+      await attachCourseRating(obj);
+      return obj;
     })
   );
 
@@ -159,6 +204,7 @@ exports.getCourseById = async (req, res) => {
     courseObj.thumbnail = await safeSignedUrl(courseObj.thumbnailKey, EXPIRY()) || courseObj.thumbnail;
   }
   await attachCourseAccess(courseObj, req.user);
+  await attachCourseRating(courseObj);
 
   res.json({ success: true, data: { ...courseObj, modules: modulesWithCounts } });
 };
@@ -179,6 +225,7 @@ exports.getCourseFullContent = async (req, res) => {
     courseObj.thumbnail = await safeSignedUrl(courseObj.thumbnailKey, EXPIRY()) || courseObj.thumbnail;
   }
   await attachCourseAccess(courseObj, req.user);
+  await attachCourseRating(courseObj);
   const [lastLessonId, review] = isAdmin
     ? [null, null]
     : await Promise.all([

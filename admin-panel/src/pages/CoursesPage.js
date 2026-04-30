@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import CourseModal from '../components/CourseModal';
 import {
   IconPlus, IconEdit, IconTrash, IconEye,
-  IconCourses, IconVideo, IconClock, IconCheckCircle, IconAlertCircle, IconTrendUp,
+  IconCourses, IconVideo, IconClock, IconCheckCircle, IconAlertCircle, IconTrendUp, IconStar,
 } from '../components/Icons';
 
 export default function CoursesPage() {
@@ -150,6 +150,12 @@ export default function CoursesPage() {
                   <span className="flex items-center gap-1">
                     <IconClock className="w-3.5 h-3.5"/> {Math.floor((course.totalDuration || 0) / 60)}m
                   </span>
+                  {course.rating?.count > 0 && (
+                    <span className="flex items-center gap-1 text-amber-600 font-medium">
+                      <IconStar className="w-3.5 h-3.5 fill-current"/> {course.rating.average}
+                      <span className="text-[#9e9e9e] font-normal">({course.rating.count})</span>
+                    </span>
+                  )}
                   {course.category && (
                     <span className="badge-gray text-[10px] py-0.5">{course.category}</span>
                   )}
