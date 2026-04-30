@@ -381,6 +381,12 @@ router.get('/admin/revenue', protect, adminOnly, getRevenueAnalytics);
  *       200:
  *         description: Review deleted
  */
+// Student review routes
+router.post('/courses/:courseId/review', protect, createCourseReview);
+router.get('/courses/:courseId/reviews', protect, getCourseReviews);
+router.get('/courses/:courseId/my-review', protect, getMyCourseReview);
+
+// Admin review routes
 router.get('/admin/course-reviews', protect, adminOnly, getAllCourseReviewsAdmin);
 router.post('/admin/course-reviews/:reviewId/approve', protect, adminOnly, approveCourseReview);
 router.delete('/admin/course-reviews/:reviewId', protect, adminOnly, deleteCourseReview);
