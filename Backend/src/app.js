@@ -52,7 +52,7 @@ if (process.env.NODE_ENV === 'development') {
 // Stripe webhooks must receive the raw body before JSON parsing.
 app.post('/api/v1/payments/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ─── Health Check ──────────────────────────────────────────────────────────────

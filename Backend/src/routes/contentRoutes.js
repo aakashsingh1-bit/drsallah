@@ -42,10 +42,22 @@ const {
 } = require('../controllers/contentController');
 const { protect, adminOnly, requireSubscription } = require('../middleware/auth');
 
-// ─── Multer memory storage for S3 uploads ─────────────────────────────────────
+// ─── Multer disk storage for S3 uploads (memory can't handle >6GB videos) ─────
+const videoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const tmpDir = require('path').join(require('os').tmpdir(), 'drsallah-uploads');
+    require('fs').mkdirSync(tmpDir, { recursive: true });
+    cb(null, tmpDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  },
+});
+
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 * 8 },
+  storage: videoStorage,
+  limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10 GB limit for large video uploads (>6GB)
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'video') {
       const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];

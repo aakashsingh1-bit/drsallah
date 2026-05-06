@@ -634,7 +634,23 @@ exports.uploadVideoDirectly = async (req, res) => {
   }
 
   const key = s3Service.generateS3Key(`videos/${lesson.course}/${lessonId}`, req.file.originalname);
-  await s3Service.uploadToS3(req.file.buffer, key, req.file.mimetype);
+  const filePath = req.file.path;
+
+  // Use multipart upload for large files (>5GB), regular upload for smaller files
+  const FIVE_GB = 5 * 1024 * 1024 * 1024;
+  if (req.file.size > FIVE_GB) {
+    await s3Service.uploadLargeFileToS3(filePath, key, req.file.mimetype);
+  } else {
+    const fs = require('fs');
+    const buffer = fs.readFileSync(filePath);
+    await s3Service.uploadToS3(buffer, key, req.file.mimetype);
+  }
+
+  // Clean up temp file
+  try {
+    const fs = require('fs');
+    fs.unlinkSync(filePath);
+  } catch {}
 
   // Get duration from form data (sent from frontend)
   const newDuration = req.body.duration ? parseInt(req.body.duration) : 0;
