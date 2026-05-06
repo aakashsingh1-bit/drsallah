@@ -32,7 +32,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
     onDrop, 
     accept: { 'video/*': ['.mp4','.webm','.mov','.avi'] }, 
     maxFiles: 1, 
-    maxSize: 500*1024*1024,
+    maxSize: 500*1024*1024*8,
   });
 
   const formatDuration = (seconds) => {
