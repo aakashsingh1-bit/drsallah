@@ -633,18 +633,9 @@ exports.uploadVideoDirectly = async (req, res) => {
     try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
   }
 
-  const key = s3Service.generateS3Key(`videos/${lesson.course}/${lessonId}`, req.file.originalname);
-  const filePath = req.file.path;
-
-  // Always use multipart upload (streams from disk in 10MB chunks) to avoid OOM
-  // fs.readFileSync would crash Node.js for files >1-2GB
-  await s3Service.uploadLargeFileToS3(filePath, key, req.file.mimetype);
-
-  // Clean up temp file from disk
-  try {
-    const fs = require('fs');
-    fs.unlinkSync(filePath);
-  } catch {}
+  // req.file comes from s3StreamStorage — already uploaded to S3 via multipart streaming
+  // No disk writes, no full memory buffer — streamed directly in 10MB chunks
+  const { key, size } = req.file;
 
   // Get duration from form data (sent from frontend)
   const newDuration = req.body.duration ? parseInt(req.body.duration) : 0;
@@ -652,7 +643,7 @@ exports.uploadVideoDirectly = async (req, res) => {
   // Update lesson with video key, size and duration
   lesson.videoKey = key;
   lesson.uploadStatus = 'ready';
-  lesson.videoSize = req.file.size;
+  lesson.videoSize = size;
   lesson.duration = newDuration;
   await lesson.save();
 

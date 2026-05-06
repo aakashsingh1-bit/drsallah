@@ -42,22 +42,13 @@ const {
 } = require('../controllers/contentController');
 const { protect, adminOnly, requireSubscription } = require('../middleware/auth');
 
-// ─── Multer disk storage for S3 uploads (memory can't handle >6GB videos) ─────
-const videoStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const tmpDir = require('path').join(require('os').tmpdir(), 'drsallah-uploads');
-    require('fs').mkdirSync(tmpDir, { recursive: true });
-    cb(null, tmpDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
-  },
-});
+// ─── Multer config ────────────────────────────────────────────────────────────
+// Use memory storage for thumbnails/images (small files), S3 streaming for videos
+const { s3StreamStorage } = require('../services/s3StreamStorage');
 
 const upload = multer({
-  storage: videoStorage,
-  limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10 GB limit for large video uploads (>6GB)
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit for thumbnails/images
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'video') {
       const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
@@ -654,7 +645,18 @@ router.post('/videos/confirm', protect, adminOnly, confirmVideoUpload);
  *       200:
  *         description: Video uploaded to S3 successfully
  */
-router.post('/videos/upload/:lessonId', protect, adminOnly, upload.single('video'), uploadVideoDirectly);
+// Video upload uses custom S3 streaming storage (no disk write, no full memory buffer)
+const videoUpload = multer({
+  storage: s3StreamStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10 GB limit
+  fileFilter: (req, file, cb) => {
+    const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
+    if (allowed.includes(file.mimetype)) return cb(null, true);
+    cb(new Error('Invalid video format. Use MP4, WebM, MOV, AVI'));
+  },
+});
+
+router.post('/videos/upload/:lessonId', protect, adminOnly, videoUpload.single('video'), uploadVideoDirectly);
 
 // ════════════════════════════════════════════════════════════════
 // VIDEO STREAMING — Student
