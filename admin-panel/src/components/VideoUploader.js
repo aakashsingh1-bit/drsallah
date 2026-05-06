@@ -32,7 +32,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
     onDrop, 
     accept: { 'video/*': ['.mp4','.webm','.mov','.avi'] }, 
     maxFiles: 1, 
-    maxSize: 500*1024*1024*8,
+    maxSize: 500*1024*1024*20,
   });
 
   const formatDuration = (seconds) => {
@@ -134,7 +134,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
                     <p className="text-[14px] font-semibold text-[#1c1d1f]">
                       {isDragActive ? 'Drop video here' : 'Drop video or click to browse'}
                     </p>
-                    <p className="text-[12px] text-[#9e9e9e] mt-2">MP4, WebM, MOV, AVI — up to 500 MB</p>
+                    <p className="text-[12px] text-[#9e9e9e] mt-2">MP4, WebM, MOV, AVI </p>
                   </div>
                 </div>
               )}
