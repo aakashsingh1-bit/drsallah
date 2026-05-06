@@ -45,7 +45,7 @@ const { protect, adminOnly, requireSubscription } = require('../middleware/auth'
 // ─── Multer memory storage for S3 uploads ─────────────────────────────────────
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 },
+  limits: { fileSize: 500 * 1024 * 1024 * 8 },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'video') {
       const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
