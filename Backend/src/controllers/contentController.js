@@ -636,17 +636,11 @@ exports.uploadVideoDirectly = async (req, res) => {
   const key = s3Service.generateS3Key(`videos/${lesson.course}/${lessonId}`, req.file.originalname);
   const filePath = req.file.path;
 
-  // Use multipart upload for large files (>5GB), regular upload for smaller files
-  const FIVE_GB = 5 * 1024 * 1024 * 1024;
-  if (req.file.size > FIVE_GB) {
-    await s3Service.uploadLargeFileToS3(filePath, key, req.file.mimetype);
-  } else {
-    const fs = require('fs');
-    const buffer = fs.readFileSync(filePath);
-    await s3Service.uploadToS3(buffer, key, req.file.mimetype);
-  }
+  // Always use multipart upload (streams from disk in 10MB chunks) to avoid OOM
+  // fs.readFileSync would crash Node.js for files >1-2GB
+  await s3Service.uploadLargeFileToS3(filePath, key, req.file.mimetype);
 
-  // Clean up temp file
+  // Clean up temp file from disk
   try {
     const fs = require('fs');
     fs.unlinkSync(filePath);
