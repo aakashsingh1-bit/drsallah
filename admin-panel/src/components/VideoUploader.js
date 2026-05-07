@@ -1,28 +1,19 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { videoAPI } from '../api';
 import toast from 'react-hot-toast';
-import { IconUpload, IconVideo, IconCheckCircle, IconX, IconClock, IconAlertCircle, IconLink } from './Icons';
+import { IconUpload, IconVideo, IconCheckCircle, IconX, IconClock, IconAlertCircle } from './Icons';
+
+// 10MB per chunk — AWS allows up to 10,000 parts, so this supports up to ~100GB files
+const CHUNK_SIZE = 10 * 1024 * 1024;
 
 export default function VideoUploader({ lesson, onClose, onUploaded }) {
-  const [tab, setTab] = useState('upload'); // 'upload' | 'import'
   const [file, setFile] = useState(null);
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState('idle');
+  const [status, setStatus] = useState('idle'); // idle | uploading | done | error
   const [duration, setDuration] = useState(null);
   const [fileSize, setFileSize] = useState(null);
-  
-  // Import from URL
-  const [importUrl, setImportUrl] = useState('');
-  const [jobId, setJobId] = useState(null);
-  const pollRef = useRef(null);
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
+  const abortRef = useRef(false);
 
   const onDrop = useCallback((accepted) => { 
     if (accepted[0]) {
@@ -30,7 +21,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
       setFile(videoFile);
       setFileSize(videoFile.size);
       
-      // Get video duration
+      // Get video duration from metadata
       const video = document.createElement('video');
       video.preload = 'metadata';
       video.onloadedmetadata = () => {
@@ -63,77 +54,96 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  // ── Direct Upload ───────────────────────────────────────────────────────
+  // ── Direct Browser-to-S3 Multipart Upload ──────────────────────────────
+  // Like YouTube: browser splits file into 10MB chunks, uploads each chunk
+  // directly to S3 via presigned URLs. Server only handles init/complete.
   const uploadVideo = async () => {
     if (!file) return toast.error('Select a video file first');
+    
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     setStatus('uploading');
     setProgress(0);
-    
-    const fd = new FormData();
-    fd.append('video', file);
-    fd.append('duration', duration || 0);
-    
+
+    let uploadId, key, partUrls;
+
     try {
-      await videoAPI.uploadDirect(lesson._id, fd, p => setProgress(p));
+      // 1. Init: tell server to start a multipart upload, get presigned URLs
+      const initRes = await videoAPI.initMultipartUpload({
+        lessonId: lesson._id,
+        filename: file.name,
+        fileSize: file.size,
+        contentType: file.type || 'video/mp4',
+      });
+      const initData = initRes.data.data;
+      uploadId = initData.uploadId;
+      key = initData.key;
+      partUrls = initData.partUrls; // [{ partNumber, url }]
+      
+      // 2. Upload each chunk directly to S3
+      const uploadedParts = [];
+      
+      for (let i = 0; i < partUrls.length; i++) {
+        if (abortRef.current) {
+          await videoAPI.abortMultipartUpload({ key, uploadId }).catch(() => {});
+          setStatus('idle');
+          setProgress(0);
+          return;
+        }
+
+        const partNum = partUrls[i].partNumber;
+        const presignedUrl = partUrls[i].url;
+        
+        // Slice the chunk from the file
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+
+        // Upload chunk directly to S3 via presigned URL
+        const uploadRes = await fetch(presignedUrl, {
+          method: 'PUT',
+          body: chunk,
+          headers: { 'Content-Type': file.type || 'video/mp4' },
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error(`Part ${partNum} upload failed with status ${uploadRes.status}`);
+        }
+
+        // Get ETag from response headers
+        const etag = uploadRes.headers.get('ETag');
+        uploadedParts.push({ ETag: etag, PartNumber: partNum });
+
+        // Update progress
+        const pct = Math.round(((i + 1) / partUrls.length) * 100);
+        setProgress(pct);
+      }
+
+      // 3. Complete: tell server to assemble all parts
+      await videoAPI.completeMultipartUpload({
+        lessonId: lesson._id,
+        key,
+        uploadId,
+        parts: uploadedParts,
+        duration: duration || 0,
+      });
+
       setStatus('done');
       toast.success('Video uploaded to S3 successfully');
       setTimeout(() => onUploaded?.(), 1500);
     } catch (err) {
       console.error('Upload error:', err);
+      
+      // Abort multipart upload on failure
+      if (uploadId && key) {
+        await videoAPI.abortMultipartUpload({ key, uploadId }).catch(() => {});
+      }
+      
       setStatus('error');
-      toast.error(err.response?.data?.message || 'Upload failed');
-    }
-  };
-
-  // ── Import from URL (Google Drive, direct links) ────────────────────────
-  const startImport = async () => {
-    if (!importUrl.trim()) return toast.error('Paste a video URL first');
-    
-    // Basic validation
-    try { new URL(importUrl); } catch {
-      return toast.error('Invalid URL format');
-    }
-
-    setStatus('importing');
-    setProgress(0);
-
-    try {
-      const response = await videoAPI.importFromUrl(lesson._id, { url: importUrl, duration: duration || 0 });
-      const jobId = response.data.data?.jobId;
-      setJobId(jobId);
-      toast.success('Import started! Tracking progress...');
-
-      // Poll for progress
-      pollRef.current = setInterval(async () => {
-        try {
-          const response = await videoAPI.getImportStatus(jobId);
-          const job = response.data.data; // { status, progress, ... }
-          setProgress(job.progress || 0);
-
-          if (job.status === 'completed') {
-            clearInterval(pollRef.current);
-            setStatus('done');
-            toast.success('Video imported to S3 successfully');
-            setTimeout(() => onUploaded?.(), 1500);
-          } else if (job.status === 'failed') {
-            clearInterval(pollRef.current);
-            setStatus('error');
-            const errMsg = job.error || 'Check the URL and try again.';
-            toast.error(`Import failed: ${errMsg}`);
-          }
-        } catch (pollErr) {
-          clearInterval(pollRef.current);
-        }
-      }, 2000);
-    } catch (err) {
-      setStatus('error');
-      toast.error(err.response?.data?.message || 'Failed to start import');
+      toast.error(err.response?.data?.message || err.message || 'Upload failed');
     }
   };
 
   const isUploading = status === 'uploading';
-  const isImporting = status === 'importing';
-  const isBusy = isUploading || isImporting;
   const isDone = status === 'done';
   const isError = status === 'error';
 
@@ -152,38 +162,9 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
 
         <div className="p-5 space-y-5">
 
-          {/* Tab Switcher */}
+          {/* ── Dropzone ───────────────────────────────────────────────── */}
           {!isDone && (
-            <div className="flex bg-[#f0ece4] rounded-xl p-1">
-              <button
-                onClick={() => { setTab('upload'); setStatus('idle'); }}
-                className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${
-                  tab === 'upload' ? 'bg-white text-[#1c1d1f] shadow-sm' : 'text-[#6a6f73] hover:text-[#1c1d1f]'
-                }`}
-              >
-                <span className="flex items-center justify-center gap-1.5">
-                  <IconUpload className="w-3.5 h-3.5" />
-                  Upload File
-                </span>
-              </button>
-              <button
-                onClick={() => { setTab('import'); setStatus('idle'); }}
-                className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${
-                  tab === 'import' ? 'bg-white text-[#1c1d1f] shadow-sm' : 'text-[#6a6f73] hover:text-[#1c1d1f]'
-                }`}
-              >
-                <span className="flex items-center justify-center gap-1.5">
-                  <IconLink className="w-3.5 h-3.5" />
-                  Import from URL
-                </span>
-              </button>
-            </div>
-          )}
-
-          {/* ── TAB: Upload File ─────────────────────────────────────────── */}
-          {tab === 'upload' && !isDone && (
             <>
-              {/* Dropzone */}
               <div
                 {...getRootProps()}
                 className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
@@ -230,7 +211,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
                       <p className="text-[14px] font-semibold text-[#1c1d1f]">
                         {isDragActive ? 'Drop video here' : 'Drop video or click to browse'}
                       </p>
-                      <p className="text-[12px] text-[#9e9e9e] mt-2">MP4, WebM, MOV, AVI — up to 10GB</p>
+                      <p className="text-[12px] text-[#9e9e9e] mt-2">MP4, WebM, MOV, AVI — any size supported</p>
                     </div>
                   </div>
                 )}
@@ -248,54 +229,11 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
             </>
           )}
 
-          {/* ── TAB: Import from URL ─────────────────────────────────────── */}
-          {tab === 'import' && !isDone && (
-            <div className="space-y-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                <div className="flex items-start gap-3">
-                  <IconLink className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
-                  <div className="text-[13px] text-amber-800 space-y-1">
-                    <p className="font-semibold">Import from Google Drive or direct URL</p>
-                    <p>Paste a shareable video link. The server will download it and upload to S3 in the background. Best for files over 5GB.</p>
-                    <p className="text-[12px] text-amber-600 mt-1">
-                      💡 For Google Drive: set sharing to "Anyone with the link" and copy the share link.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="field-label">Video URL *</label>
-                <input
-                  type="url"
-                  className="field-input"
-                  value={importUrl}
-                  onChange={e => setImportUrl(e.target.value)}
-                  placeholder="https://drive.google.com/file/d/... or https://example.com/video.mp4"
-                  disabled={isImporting}
-                />
-              </div>
-
-              <div>
-                <label className="field-label">Duration (seconds) <span className="text-[#9e9e9e] font-normal">— optional</span></label>
-                <input
-                  type="number"
-                  className="field-input"
-                  value={duration || ''}
-                  onChange={e => setDuration(parseInt(e.target.value) || 0)}
-                  placeholder="e.g. 3600 for 1 hour"
-                  disabled={isImporting}
-                  min={0}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Progress — Upload */}
+          {/* ── Progress ───────────────────────────────────────────────── */}
           {isUploading && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-[#6a6f73]">Uploading to server...</span>
+                <span className="text-[#6a6f73]">Uploading directly to S3...</span>
                 <span className="text-[#1c1d1f] font-semibold">{progress}%</span>
               </div>
               <div className="h-2 bg-[#f0ece4] rounded-full overflow-hidden">
@@ -306,44 +244,21 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
               </div>
               <p className="text-[11px] text-[#9e9e9e] text-center">
                 {fileSize > 1024 * 1024 * 1024 ? (
-                  <>Large file — this may take several minutes. Do not close this page.</>
+                  <>Large file — uploading in {Math.ceil(fileSize / CHUNK_SIZE)} chunks directly to S3. Do not close this page.</>
                 ) : (
-                  <>Uploading to S3 via server...</>
+                  <>Uploading chunks directly to S3 — fast & reliable</>
                 )}
               </p>
             </div>
           )}
 
-          {/* Progress — Import from URL */}
-          {isImporting && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-[12px]">
-                <span className="text-[#6a6f73]">
-                  {progress < 50 ? 'Downloading from URL...' : 'Uploading to S3...'}
-                </span>
-                <span className="text-[#1c1d1f] font-semibold">{progress}%</span>
-              </div>
-              <div className="h-2 bg-[#f0ece4] rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-blue-500 to-brand-500 rounded-full transition-all duration-300"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="text-[11px] text-[#9e9e9e] text-center">
-                Server is downloading + uploading. You can close this popup — it will continue in background.
-              </p>
-            </div>
-          )}
-
-          {/* Done */}
+          {/* ── Done ───────────────────────────────────────────────────── */}
           {isDone && (
             <div className="text-center py-6 space-y-3">
               <div className="w-16 h-16 rounded-2xl bg-emerald-100 flex items-center justify-center mx-auto">
                 <IconCheckCircle className="w-8 h-8 text-emerald-600" />
               </div>
-              <p className="text-[16px] font-bold text-[#1c1d1f]">
-                {tab === 'import' ? 'Import Complete!' : 'Upload Complete!'}
-              </p>
+              <p className="text-[16px] font-bold text-[#1c1d1f]">Upload Complete!</p>
               <p className="text-[13px] text-[#9e9e9e]">The lesson video is ready for streaming</p>
               {duration && (
                 <p className="text-[12px] text-[#6a6f73]">
@@ -353,65 +268,42 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
             </div>
           )}
 
-          {/* Error */}
+          {/* ── Error ──────────────────────────────────────────────────── */}
           {isError && (
             <div className="flex items-center gap-3 p-3 rounded-xl bg-red-50 border border-red-200">
               <IconAlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
               <p className="text-[13px] text-red-600">
-                {tab === 'import' ? 'Import failed. Check the URL and try again.' : 'Upload failed. Please try again.'}
+                Upload failed. Please try again.
               </p>
             </div>
           )}
 
-          {/* Actions */}
+          {/* ── Actions ────────────────────────────────────────────────── */}
           {!isDone && (
             <div className="flex gap-3">
-              <button onClick={onClose} className="btn-secondary flex-1" disabled={isBusy}>
+              <button onClick={onClose} className="btn-secondary flex-1" disabled={isUploading}>
                 Cancel
               </button>
-              {tab === 'upload' ? (
-                <button
-                  onClick={uploadVideo}
-                  className="btn-primary flex-1"
-                  disabled={!file || isBusy}
-                >
-                  {isUploading ? (
-                    <span className="flex items-center gap-2">
-                      <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                      </svg>
-                      {progress}%
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <IconUpload className="w-4 h-4" />
-                      Upload Video
-                    </span>
-                  )}
-                </button>
-              ) : (
-                <button
-                  onClick={startImport}
-                  className="btn-primary flex-1"
-                  disabled={!importUrl.trim() || isBusy}
-                >
-                  {isImporting ? (
-                    <span className="flex items-center gap-2">
-                      <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                      </svg>
-                      {progress}%
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <IconLink className="w-4 h-4" />
-                      Start Import
-                    </span>
-                  )}
-                </button>
-              )}
+              <button
+                onClick={uploadVideo}
+                className="btn-primary flex-1"
+                disabled={!file || isUploading}
+              >
+                {isUploading ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                    {progress}%
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <IconUpload className="w-4 h-4" />
+                    Upload Video
+                  </span>
+                )}
+              </button>
             </div>
           )}
         </div>

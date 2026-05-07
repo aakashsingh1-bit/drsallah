@@ -686,6 +686,97 @@ exports.uploadVideoDirectly = async (req, res) => {
 };
 
 // ════════════════════════════════════════════════════════════════
+// DIRECT BROWSER-TO-S3 MULTIPART UPLOAD (like YouTube)
+// ════════════════════════════════════════════════════════════════
+// POST /videos/direct-multipart/init
+// Body: { lessonId, filename, fileSize, contentType }
+//
+// The browser splits the file into chunks and uploads each chunk directly
+// to S3 via presigned URLs. This bypasses the server entirely for upload
+// data — as fast as the user's internet allows.
+exports.initDirectMultipartUpload = async (req, res) => {
+  const { lessonId, filename, fileSize, contentType } = req.body;
+  if (!lessonId || !filename || !fileSize) {
+    return res.status(400).json({ success: false, message: 'lessonId, filename, and fileSize are required' });
+  }
+
+  const lesson = await Lesson.findById(lessonId);
+  if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+
+  const key = `videos/${lesson.course}/${lessonId}/${require('uuid').v4()}-${filename}`;
+  const mimetype = contentType || 'video/mp4';
+
+  const result = await s3Service.initMultipartUploadToS3(key, mimetype, fileSize, {
+    originalName: filename,
+    lessonId,
+  });
+
+  // Store uploadId in lesson for tracking
+  lesson.videoKey = key;
+  lesson.uploadStatus = 'uploading';
+  await lesson.save();
+
+  res.json({
+    success: true,
+    data: {
+      uploadId: result.UploadId,
+      key: result.key,
+      partUrls: result.partUrls,
+      numParts: result.numParts,
+      partSize: result.partSize,
+    },
+  });
+};
+
+// POST /videos/direct-multipart/complete
+// Body: { lessonId, key, uploadId, parts: [{ ETag, PartNumber }], duration }
+exports.completeDirectMultipartUpload = async (req, res) => {
+  const { lessonId, key, uploadId, parts, duration } = req.body;
+  if (!lessonId || !key || !uploadId || !parts) {
+    return res.status(400).json({ success: false, message: 'lessonId, key, uploadId, and parts are required' });
+  }
+
+  const lesson = await Lesson.findById(lessonId);
+  if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+
+  const oldDuration = lesson.duration || 0;
+  const newDuration = Number(duration) || 0;
+
+  try {
+    await s3Service.completeMultipartUploadToS3(key, uploadId, parts);
+
+    // Update lesson
+    lesson.videoKey = key;
+    lesson.uploadStatus = 'ready';
+    lesson.duration = newDuration;
+    await lesson.save();
+
+    // Adjust course totalDuration
+    const durationDiff = newDuration - oldDuration;
+    if (durationDiff !== 0) {
+      await Course.findByIdAndUpdate(lesson.course, { $inc: { totalDuration: durationDiff } });
+    }
+
+    res.json({ success: true, message: 'Video uploaded to S3 successfully', data: { lessonId, key, lesson } });
+  } catch (err) {
+    // Abort on failure
+    await s3Service.abortMultipartUploadToS3(key, uploadId).catch(() => {});
+    throw err;
+  }
+};
+
+// POST /videos/direct-multipart/abort
+// Body: { key, uploadId }
+exports.abortDirectMultipartUpload = async (req, res) => {
+  const { key, uploadId } = req.body;
+  if (!key || !uploadId) {
+    return res.status(400).json({ success: false, message: 'key and uploadId are required' });
+  }
+  await s3Service.abortMultipartUploadToS3(key, uploadId);
+  res.json({ success: true, message: 'Upload aborted' });
+};
+
+// ════════════════════════════════════════════════════════════════
 // VIDEO IMPORT FROM URL (Google Drive, direct links, etc.)
 // ════════════════════════════════════════════════════════════════
 // POST /videos/import-url/:lessonId

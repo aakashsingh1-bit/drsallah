@@ -149,6 +149,76 @@ const getVideoUploadUrl = async (courseId, lessonId, filename) => {
   return getPresignedUploadUrl(key, 'video/mp4', 7200); // 2hr to upload
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+// DIRECT BROWSER-TO-S3 MULTIPART UPLOAD (like YouTube)
+// ═════════════════════════════════════════════════════════════════════════════
+// The browser splits the file into chunks and uploads each chunk directly to S3
+// via presigned URLs. This bypasses the server entirely for the upload data,
+// making it as fast as the user's internet connection allows.
+//
+// Part size: 10MB (minimum allowed by S3 is 5MB, except for the last part)
+// Max parts: 10,000 (S3 limit) → supports files up to 100TB
+
+/**
+ * Initiate a multipart upload and generate presigned URLs for all parts.
+ * The browser will upload each part directly to S3 using these URLs.
+ */
+const initMultipartUploadToS3 = async (key, mimetype, fileSize, metadata = {}) => {
+  const PART_SIZE = 10 * 1024 * 1024; // 10MB per part
+  const numParts = Math.ceil(fileSize / PART_SIZE);
+
+  // Initiate multipart upload
+  const createCommand = new CreateMultipartUploadCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ContentType: mimetype,
+    Metadata: metadata,
+    ServerSideEncryption: 'AES256',
+  });
+  const { UploadId } = await s3.send(createCommand);
+
+  // Generate presigned URLs for each part
+  const partUrls = [];
+  for (let i = 0; i < numParts; i++) {
+    const partNumber = i + 1;
+    const uploadPartCommand = new UploadPartCommand({
+      Bucket: BUCKET,
+      Key: key,
+      PartNumber: partNumber,
+      UploadId,
+    });
+    // Presigned URL valid for 24 hours (generous for large files)
+    const url = await getSignedUrl(s3, uploadPartCommand, { expiresIn: 86400 });
+    partUrls.push({ partNumber, url });
+  }
+
+  return { UploadId, key, partUrls, numParts, partSize: PART_SIZE };
+};
+
+/**
+ * Complete a multipart upload after all parts have been uploaded by the browser.
+ * The browser sends back the ETags it received from each part upload.
+ */
+const completeMultipartUploadToS3 = async (key, UploadId, parts) => {
+  const completeCommand = new CompleteMultipartUploadCommand({
+    Bucket: BUCKET,
+    Key: key,
+    UploadId,
+    MultipartUpload: { Parts: parts },
+  });
+  await s3.send(completeCommand);
+  return { key, url: `https://${BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}` };
+};
+
+/**
+ * Abort a multipart upload (cleanup on failure).
+ */
+const abortMultipartUploadToS3 = async (key, UploadId) => {
+  try {
+    await s3.send(new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId }));
+  } catch {} // Silently ignore — already aborted or not found
+};
+
 module.exports = {
   s3,
   BUCKET,
@@ -161,4 +231,7 @@ module.exports = {
   uploadThumbnail,
   uploadGalleryImage,
   getVideoUploadUrl,
+  initMultipartUploadToS3,
+  completeMultipartUploadToS3,
+  abortMultipartUploadToS3,
 };

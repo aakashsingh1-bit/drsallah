@@ -107,6 +107,12 @@ export const videoAPI = {
       headers: { 'Content-Type': file.type || 'video/mp4' },
       onUploadProgress: (e) => onProgress && onProgress(Math.round((e.loaded * 100) / e.total)),
     }),
+  // ── Direct Browser-to-S3 Multipart Upload (like YouTube) ──────────────
+  // The browser splits the file into 10MB chunks and uploads each chunk
+  // directly to S3 via presigned URLs. Bypasses the server entirely.
+  initMultipartUpload: (data) => api.post('/videos/direct-multipart/init', data),
+  completeMultipartUpload: (data) => api.post('/videos/direct-multipart/complete', data),
+  abortMultipartUpload: (data) => api.post('/videos/direct-multipart/abort', data),
   // Import video from URL (Google Drive, direct links, etc.)
   // Server downloads the file and uploads to S3 in the background.
   importFromUrl: (lessonId, data) => api.post(`/videos/import-url/${lessonId}`, data),
