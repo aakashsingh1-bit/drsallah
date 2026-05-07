@@ -4,17 +4,20 @@ import { videoAPI } from '../api';
 import toast from 'react-hot-toast';
 import { IconUpload, IconVideo, IconCheckCircle, IconX, IconClock, IconAlertCircle } from './Icons';
 
-// 10MB per chunk — AWS supports up to 10,000 parts, so this handles up to ~100GB
+// 50MB per chunk — fewer parts = fewer round trips = much faster upload
+// AWS supports up to 10,000 parts, so 50MB handles up to ~500GB
 const CHUNK_SIZE = 50 * 1024 * 1024;
-// Upload up to 3 chunks in parallel for faster throughput
-const CONCURRENCY = 3;
+// Upload up to 6 chunks in parallel for maximum throughput
+// Most ISPs and S3 handle 6 concurrent connections well
+const CONCURRENCY = 6;
 
 export default function VideoUploader({ lesson, onClose, onUploaded }) {
   const [file, setFile] = useState(null);
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState('idle'); // idle | uploading | done | error
+  const [status, setStatus] = useState('idle'); // idle | preparing | uploading | done | error
   const [duration, setDuration] = useState(null);
   const [fileSize, setFileSize] = useState(null);
+  const [phase, setPhase] = useState(''); // '' | 'Preparing upload...' | 'Uploading to S3...'
   const abortRef = useRef(false);
 
   const onDrop = useCallback((accepted) => { 
@@ -80,20 +83,26 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
   };
 
   // ── Direct Browser-to-S3 Multipart Upload ──────────────────────────────
-  // Like YouTube: browser splits file into 10MB chunks, uploads each chunk
+  // Like YouTube: browser splits file into 50MB chunks, uploads each chunk
   // directly to S3 via presigned URLs. Server only handles init/complete.
+  // Key optimizations for speed:
+  //   - 50MB chunks (fewer parts = fewer round trips)
+  //   - 6 concurrent uploads (max throughput without overwhelming browser)
+  //   - Presigned URLs generated in parallel on server (Promise.all)
   const uploadVideo = async () => {
     if (!file) return toast.error('Select a video file first');
     
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     setStatus('uploading');
     setProgress(0);
+    setPhase('Preparing upload...');
     abortRef.current = false;
 
     let uploadId, key, partUrls;
 
     try {
       // 1. Init: tell server to start multipart upload, get presigned URLs
+      //    Server now generates ALL presigned URLs in parallel (Promise.all)
       const initRes = await videoAPI.initMultipartUpload({
         lessonId: lesson._id,
         filename: file.name,
@@ -105,6 +114,8 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
       key = initData.key;
       partUrls = initData.partUrls; // [{ partNumber, url }]
       
+      setPhase('Uploading to S3...');
+
       // 2. Upload chunks concurrently (like YouTube does)
       const uploadedParts = [];
       let nextIndex = 0;
@@ -131,7 +142,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
         }
       };
 
-      // Launch concurrent uploaders
+      // Launch concurrent uploaders (6 in parallel for max throughput)
       const workers = [];
       for (let w = 0; w < Math.min(CONCURRENCY, partUrls.length); w++) {
         workers.push(uploadNext());
@@ -263,7 +274,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
           {isUploading && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-[#6a6f73]">Uploading directly to S3...</span>
+                <span className="text-[#6a6f73]">{phase || 'Uploading...'}</span>
                 <span className="text-[#1c1d1f] font-semibold">{progress}%</span>
               </div>
               <div className="h-2 bg-[#f0ece4] rounded-full overflow-hidden">
@@ -273,7 +284,9 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
                 />
               </div>
               <p className="text-[11px] text-[#9e9e9e] text-center">
-                Uploading {Math.ceil(fileSize / CHUNK_SIZE)} chunks directly to S3 — no server bottleneck
+                {phase === 'Preparing upload...'
+                  ? 'Generating presigned URLs in parallel...'
+                  : `Uploading ${Math.ceil(fileSize / CHUNK_SIZE)} chunks (50MB each) — 6 concurrent streams`}
               </p>
             </div>
           )}

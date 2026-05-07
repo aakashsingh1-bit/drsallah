@@ -168,7 +168,9 @@ const getVideoUploadUrl = async (courseId, lessonId, filename) => {
  * The browser will upload each part directly to S3 using these URLs.
  */
 const initMultipartUploadToS3 = async (key, mimetype, fileSize, metadata = {}) => {
-  const PART_SIZE = 10 * 1024 * 1024; // 10MB per part
+  // Use 50MB per part — fewer parts = fewer round trips = faster upload
+  // AWS supports up to 10,000 parts, so 50MB handles up to ~500GB
+  const PART_SIZE = 50 * 1024 * 1024; // 50MB per part
   const numParts = Math.ceil(fileSize / PART_SIZE);
 
   // Initiate multipart upload
@@ -181,8 +183,9 @@ const initMultipartUploadToS3 = async (key, mimetype, fileSize, metadata = {}) =
   });
   const { UploadId } = await s3.send(createCommand);
 
-  // Generate presigned URLs for each part
-  const partUrls = [];
+  // Generate presigned URLs for ALL parts IN PARALLEL using Promise.all
+  // Sequential generation is a major bottleneck (each getSignedUrl call takes ~200-500ms)
+  const partUrlPromises = [];
   for (let i = 0; i < numParts; i++) {
     const partNumber = i + 1;
     const uploadPartCommand = new UploadPartCommand({
@@ -192,9 +195,12 @@ const initMultipartUploadToS3 = async (key, mimetype, fileSize, metadata = {}) =
       UploadId,
     });
     // Presigned URL valid for 24 hours (generous for large files)
-    const url = await getSignedUrl(s3, uploadPartCommand, { expiresIn: 86400 });
-    partUrls.push({ partNumber, url });
+    partUrlPromises.push(
+      getSignedUrl(s3, uploadPartCommand, { expiresIn: 86400 })
+        .then(url => ({ partNumber, url }))
+    );
   }
+  const partUrls = await Promise.all(partUrlPromises);
 
   return { UploadId, key, partUrls, numParts, partSize: PART_SIZE };
 };
