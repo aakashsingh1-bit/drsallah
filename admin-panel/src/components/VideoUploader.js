@@ -118,9 +118,10 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
           } else if (job.status === 'failed') {
             clearInterval(pollRef.current);
             setStatus('error');
-            toast.error('Import failed. Check the URL and try again.');
+            const errMsg = job.error || 'Check the URL and try again.';
+            toast.error(`Import failed: ${errMsg}`);
           }
-        } catch {
+        } catch (pollErr) {
           clearInterval(pollRef.current);
         }
       }, 2000);

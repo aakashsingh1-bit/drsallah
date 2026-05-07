@@ -694,6 +694,99 @@ exports.uploadVideoDirectly = async (req, res) => {
 // The server downloads the file from the URL and uploads it to S3 using
 // streaming multipart upload. This avoids tying up the admin's browser
 // connection and is ideal for files >5GB.
+
+/**
+ * Convert various URL formats to a direct downloadable URL.
+ * Handles Google Drive share links by extracting the file ID and
+ * using the direct download endpoint.
+ */
+const resolveDownloadUrl = (inputUrl) => {
+  const { URL: UrlParser } = require('url');
+
+  // --- Google Drive ---
+  // Pattern: https://drive.google.com/file/d/FILE_ID/view
+  // Pattern: https://drive.google.com/uc?id=FILE_ID
+  // Pattern: https://drive.google.com/open?id=FILE_ID
+  const gDriveMatch = inputUrl.match(
+    /drive\.google\.com\/(?:file\/d\/|uc\?id=|open\?id=)([a-zA-Z0-9_-]+)/
+  );
+  if (gDriveMatch) {
+    const fileId = gDriveMatch[1];
+    // Use the export download endpoint — this works for files up to ~5GB
+    // For larger files, Google shows a virus scan confirmation page.
+    // We handle that by checking the response content-type below.
+    return {
+      url: `https://drive.google.com/uc?export=download&id=${fileId}`,
+      isGoogleDrive: true,
+      fileId,
+    };
+  }
+
+  // --- Direct URL (any other link) ---
+  return { url: inputUrl, isGoogleDrive: false, fileId: null };
+};
+
+/**
+ * Download from a URL that may require handling Google Drive's
+ * virus scan confirmation page for large files.
+ * Returns a readable stream.
+ */
+const createDownloadStream = (url, isGoogleDrive, jobId) => {
+  const https = require('https');
+  const http = require('http');
+  const { URL: UrlParser } = require('url');
+
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new UrlParser(url);
+    const httpModule = parsedUrl.protocol === 'https:' ? https : http;
+
+    const doRequest = (targetUrl) => {
+      const parsed = new UrlParser(targetUrl);
+      const mod = parsed.protocol === 'https:' ? https : http;
+
+      mod.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (response) => {
+        // Handle redirects
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          const redirectUrl = new UrlParser(response.headers.location, targetUrl).href;
+          doRequest(redirectUrl);
+          return;
+        }
+
+        // Google Drive: handle virus scan confirmation page
+        // When the file is large, Google returns an HTML page with a form
+        // containing a confirm parameter. We need to extract it and retry.
+        if (isGoogleDrive && response.headers['content-type']?.includes('text/html')) {
+          let html = '';
+          response.on('data', (chunk) => { html += chunk.toString(); });
+          response.on('end', () => {
+            // Look for the confirm parameter in the HTML
+            const confirmMatch = html.match(/confirm=([a-zA-Z0-9_-]+)/);
+            if (confirmMatch) {
+              const parsed = new UrlParser(targetUrl);
+              // Add the confirm parameter to the URL
+              const confirmUrl = `${parsed.origin}${parsed.pathname}?id=${new URLSearchParams(parsed.search).get('id')}&export=download&confirm=${confirmMatch[1]}`;
+              doRequest(confirmUrl);
+            } else {
+              reject(new Error('Google Drive returned HTML instead of file. Make sure the file is shared with "Anyone with the link".'));
+            }
+          });
+          return;
+        }
+
+        // Check if we got HTML instead of a file (non-Google Drive)
+        if (response.headers['content-type']?.includes('text/html')) {
+          reject(new Error('URL returned HTML instead of a video file. Use a direct download link.'));
+          return;
+        }
+
+        resolve(response);
+      }).on('error', reject);
+    };
+
+    doRequest(url);
+  });
+};
+
 exports.importVideoFromUrl = async (req, res) => {
   const { lessonId } = req.params;
   const { url, duration } = req.body;
@@ -705,8 +798,10 @@ exports.importVideoFromUrl = async (req, res) => {
   const lesson = await Lesson.findById(lessonId);
   if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
 
+  // Resolve the URL (handle Google Drive, etc.)
+  const resolved = resolveDownloadUrl(url);
+
   // Start the import asynchronously — respond immediately with a job ID
-  // The frontend can poll or we can use a webhook/socket for completion.
   const jobId = `import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   // Store job info in memory (for simplicity; in production use Redis/DB)
@@ -716,25 +811,16 @@ exports.importVideoFromUrl = async (req, res) => {
     progress: 0,
     lessonId,
     url,
+    resolvedUrl: resolved.url,
+    isGoogleDrive: resolved.isGoogleDrive,
     startedAt: new Date(),
   });
 
   // Execute the download + upload in the background
-  const { s3StreamStorage } = require('../services/s3StreamStorage');
-  const https = require('https');
-  const http = require('http');
-  const { URL: UrlParser } = require('url');
   const path = require('path');
 
   (async () => {
     try {
-      const parsedUrl = new UrlParser(url);
-      const httpModule = parsedUrl.protocol === 'https:' ? https : http;
-
-      // Initiate S3 multipart upload directly (reuse s3StreamStorage logic)
-      const ext = path.extname(parsedUrl.pathname) || '.mp4';
-      const key = `videos/${lessonId}/${require('uuid').v4()}${ext}`;
-
       const {
         S3Client,
         CreateMultipartUploadCommand,
@@ -762,6 +848,13 @@ exports.importVideoFromUrl = async (req, res) => {
       const partSize = 50 * 1024 * 1024; // 50MB
       const concurrency = 5;
 
+      // Determine file extension from URL or default to .mp4
+      const parsedUrl = new URL(resolved.url);
+      let ext = path.extname(parsedUrl.pathname);
+      if (!ext || ext.length > 6) ext = '.mp4';
+      const key = `videos/${lessonId}/${require('uuid').v4()}${ext}`;
+
+      // Initiate S3 multipart upload
       const { UploadId } = await s3.send(new CreateMultipartUploadCommand({
         Bucket: bucket,
         Key: key,
@@ -792,105 +885,111 @@ exports.importVideoFromUrl = async (req, res) => {
         if (activeUploads.size > 0) await Promise.all(activeUploads);
       };
 
-      // Download the file and stream to S3
+      // Download the file using the smart downloader (handles Google Drive confirm page)
+      const stream = await createDownloadStream(resolved.url, resolved.isGoogleDrive, jobId);
+      const contentLength = parseInt(stream.headers['content-length'] || '0', 10);
+
+      // Update job with content info
+      const initJob = global.importJobs.get(jobId);
+      if (initJob) {
+        initJob.contentLength = contentLength;
+        initJob.message = `Downloading from ${resolved.isGoogleDrive ? 'Google Drive' : 'URL'}...`;
+      }
+
+      // Stream the download to S3 multipart upload
       await new Promise((resolve, reject) => {
-        httpModule.get(url, (response) => {
-          // Handle redirects
-          if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-            // Follow redirect
-            httpModule.get(response.headers.location, (res2) => {
-              downloadStream(res2, resolve, reject);
-            }).on('error', reject);
-            return;
+        let currentChunk = Buffer.alloc(0);
+        let downloadedBytes = 0;
+
+        stream.on('data', (chunk) => {
+          currentChunk = Buffer.concat([currentChunk, chunk]);
+          downloadedBytes += chunk.length;
+
+          // Update progress (0-50% = download phase)
+          const job = global.importJobs.get(jobId);
+          if (job) {
+            job.downloadedBytes = downloadedBytes;
+            if (contentLength > 0) {
+              job.progress = Math.min(50, Math.round((downloadedBytes / contentLength) * 50));
+            } else {
+              // No content-length — show indeterminate progress
+              job.progress = Math.min(49, Math.round((downloadedBytes / (50 * 1024 * 1024)) * 5));
+            }
           }
-          downloadStream(response, resolve, reject);
-        }).on('error', reject);
 
-        function downloadStream(stream, resolve, reject) {
-          let currentChunk = Buffer.alloc(0);
-          let downloadedBytes = 0;
-          const contentLength = parseInt(stream.headers['content-length'] || '0', 10);
+          // Flush complete parts to S3
+          while (currentChunk.length >= partSize) {
+            partNumber++;
+            const partBuffer = currentChunk.subarray(0, partSize);
+            currentChunk = currentChunk.subarray(partSize);
+            dispatchUpload(partBuffer, partNumber);
+          }
+        });
 
-          stream.on('data', (chunk) => {
-            currentChunk = Buffer.concat([currentChunk, chunk]);
-            downloadedBytes += chunk.length;
-
-            // Update progress
+        stream.on('end', async () => {
+          try {
+            // Mark download complete
             const job = global.importJobs.get(jobId);
             if (job) {
-              job.downloadedBytes = downloadedBytes;
-              if (contentLength > 0) {
-                job.progress = Math.round((downloadedBytes / contentLength) * 50); // 0-50% = download
-              }
+              job.status = 'uploading';
+              job.progress = 50;
+              job.message = 'Uploading to S3...';
             }
 
-            // Flush complete parts
-            while (currentChunk.length >= partSize) {
+            await waitForAllUploads();
+
+            // Upload final chunk
+            if (currentChunk.length > 0) {
               partNumber++;
-              const partBuffer = currentChunk.subarray(0, partSize);
-              currentChunk = currentChunk.subarray(partSize);
-              dispatchUpload(partBuffer, partNumber);
+              await uploadPart(currentChunk, partNumber);
             }
-          });
 
-          stream.on('end', async () => {
-            try {
-              // Mark download complete
-              const job = global.importJobs.get(jobId);
-              if (job) job.status = 'uploading';
-
-              await waitForAllUploads();
-
-              // Upload final chunk
-              if (currentChunk.length > 0) {
-                partNumber++;
-                await uploadPart(currentChunk, partNumber);
-              }
-
-              if (uploadedParts.length === 0) {
-                await uploadPart(Buffer.alloc(0), 1);
-              }
-
-              // Complete multipart
-              await s3.send(new CompleteMultipartUploadCommand({
-                Bucket: bucket, Key: key, UploadId,
-                MultipartUpload: { Parts: uploadedParts },
-              }));
-
-              // Update lesson in DB
-              const newDuration = duration ? parseInt(duration) : 0;
-              lesson.videoKey = key;
-              lesson.uploadStatus = 'ready';
-              lesson.videoSize = totalBytes;
-              lesson.duration = newDuration;
-              await lesson.save();
-
-              if (job) {
-                job.status = 'completed';
-                job.progress = 100;
-                job.key = key;
-                job.size = totalBytes;
-              }
-
-              resolve();
-            } catch (err) {
-              try { await s3.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId })); } catch {}
-              if (global.importJobs.get(jobId)) global.importJobs.get(jobId).status = 'failed';
-              reject(err);
+            if (uploadedParts.length === 0) {
+              await uploadPart(Buffer.alloc(0), 1);
             }
-          });
 
-          stream.on('error', async (err) => {
+            // Complete multipart upload
+            await s3.send(new CompleteMultipartUploadCommand({
+              Bucket: bucket, Key: key, UploadId,
+              MultipartUpload: { Parts: uploadedParts },
+            }));
+
+            // Update lesson in DB
+            const newDuration = duration ? parseInt(duration) : 0;
+            lesson.videoKey = key;
+            lesson.uploadStatus = 'ready';
+            lesson.videoSize = totalBytes;
+            lesson.duration = newDuration;
+            await lesson.save();
+
+            if (job) {
+              job.status = 'completed';
+              job.progress = 100;
+              job.key = key;
+              job.size = totalBytes;
+              job.message = 'Import complete!';
+            }
+
+            resolve();
+          } catch (err) {
             try { await s3.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId })); } catch {}
-            if (global.importJobs.get(jobId)) global.importJobs.get(jobId).status = 'failed';
+            const failedJob = global.importJobs.get(jobId);
+            if (failedJob) { failedJob.status = 'failed'; failedJob.error = err.message; }
             reject(err);
-          });
-        }
+          }
+        });
+
+        stream.on('error', async (err) => {
+          try { await s3.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId })); } catch {}
+          const failedJob = global.importJobs.get(jobId);
+          if (failedJob) { failedJob.status = 'failed'; failedJob.error = err.message; }
+          reject(err);
+        });
       });
     } catch (err) {
       console.error('Import error:', err);
       const job = global.importJobs.get(jobId);
-      if (job) job.status = 'failed';
+      if (job) { job.status = 'failed'; job.error = err.message; }
     }
   })();
 
