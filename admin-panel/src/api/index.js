@@ -107,6 +107,10 @@ export const videoAPI = {
       headers: { 'Content-Type': file.type || 'video/mp4' },
       onUploadProgress: (e) => onProgress && onProgress(Math.round((e.loaded * 100) / e.total)),
     }),
+  // Import video from URL (Google Drive, direct links, etc.)
+  // Server downloads the file and uploads to S3 in the background.
+  importFromUrl: (lessonId, data) => api.post(`/videos/import-url/${lessonId}`, data),
+  getImportStatus: (jobId) => api.get(`/videos/import-status/${jobId}`),
 };
 
 // ── Subscriptions ─────────────────────────────────────────────────────────────

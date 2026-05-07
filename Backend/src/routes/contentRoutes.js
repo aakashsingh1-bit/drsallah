@@ -29,6 +29,8 @@ const {
   getVideoUploadPresignedUrl,
   confirmVideoUpload,
   uploadVideoDirectly,
+  importVideoFromUrl,
+  getImportStatus,
   // Streaming
   getStreamUrl,
   getFreeLessonStream,
@@ -657,6 +659,12 @@ const videoUpload = multer({
 });
 
 router.post('/videos/upload/:lessonId', protect, adminOnly, videoUpload.single('video'), uploadVideoDirectly);
+
+// ─── Video Import from URL (Google Drive, direct links, etc.) ──────────────
+// For large files >5GB, use this instead of direct browser upload.
+// The server downloads the file in the background and streams it to S3.
+router.post('/videos/import-url/:lessonId', protect, adminOnly, importVideoFromUrl);
+router.get('/videos/import-status/:jobId', protect, adminOnly, getImportStatus);
 
 // ════════════════════════════════════════════════════════════════
 // VIDEO STREAMING — Student

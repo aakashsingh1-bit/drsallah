@@ -71,3 +71,4 @@ export const IconMoreVert = ic('M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1
 export const IconFilter = ic('M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z');
 export const IconDownload = ic('M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4');
 export const IconZap = ic('M13 10V3L4 14h7v7l9-11h-7z');
+export const IconLink = ic('M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71 M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71');

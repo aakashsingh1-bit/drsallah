@@ -8,8 +8,6 @@ export default function LessonModal({ moduleId, lesson, onClose, onSaved }) {
     description: lesson?.description || '',
     isPublished: lesson?.isPublished || false,
     isFree: lesson?.isFree || false,
-    scheduledAt: lesson?.scheduledAt ? lesson.scheduledAt.split('T')[0] : '',
-    order: lesson?.order || 0,
   });
   const [loading, setLoading] = useState(false);
 
@@ -17,7 +15,7 @@ export default function LessonModal({ moduleId, lesson, onClose, onSaved }) {
     e.preventDefault();
     setLoading(true);
     try {
-      const payload = { ...form, scheduledAt: form.scheduledAt || null };
+      const payload = { ...form };
       if (lesson) {
         await lessonsAPI.update(lesson._id, payload);
         toast.success('Lesson updated');
@@ -48,14 +46,6 @@ export default function LessonModal({ moduleId, lesson, onClose, onSaved }) {
           <div>
             <label className="field-label">Description</label>
             <textarea className="field-textarea min-h-16" value={form.description} onChange={e => setForm({...form, description: e.target.value})} placeholder="Brief description of this lesson" />
-          </div>
-          <div>
-            <label className="field-label">Order</label>
-            <input type="number" className="field-input" value={form.order} onChange={e => setForm({...form, order: parseInt(e.target.value)})} min={0} />
-          </div>
-          <div>
-            <label className="field-label">Schedule Release <span className="text-[#9e9e9e] font-normal">(drip content)</span></label>
-            <input type="date" className="field-input" value={form.scheduledAt} onChange={e => setForm({...form, scheduledAt: e.target.value})} />
           </div>
           <div className="space-y-3">
             <label className="flex items-center gap-3 cursor-pointer" onClick={() => setForm({...form, isPublished: !form.isPublished})}>

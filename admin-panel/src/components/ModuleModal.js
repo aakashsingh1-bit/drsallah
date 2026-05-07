@@ -7,7 +7,6 @@ export default function ModuleModal({ courseId, module, onClose, onSaved }) {
     title: module?.title || '',
     description: module?.description || '',
     isPublished: module?.isPublished || false,
-    scheduledAt: module?.scheduledAt ? module.scheduledAt.split('T')[0] : '',
   });
   const [loading, setLoading] = useState(false);
 
@@ -15,7 +14,7 @@ export default function ModuleModal({ courseId, module, onClose, onSaved }) {
     e.preventDefault();
     setLoading(true);
     try {
-      const payload = { ...form, scheduledAt: form.scheduledAt || null };
+      const payload = { ...form };
       if (module) {
         await modulesAPI.update(module._id, payload);
         toast.success('Module updated');
@@ -46,10 +45,6 @@ export default function ModuleModal({ courseId, module, onClose, onSaved }) {
           <div>
             <label className="field-label">Description</label>
             <textarea className="field-textarea min-h-16" value={form.description} onChange={e => setForm({...form, description: e.target.value})} placeholder="What will students learn?" />
-          </div>
-          <div>
-            <label className="field-label">Schedule Release <span className="text-[#9e9e9e] font-normal">(drip content)</span></label>
-            <input type="date" className="field-input" value={form.scheduledAt} onChange={e => setForm({...form, scheduledAt: e.target.value})} />
           </div>
           <label className="flex items-center gap-3 cursor-pointer" onClick={() => setForm({...form, isPublished: !form.isPublished})}>
             <div className={`w-10 h-5 rounded-full transition-colors ${form.isPublished ? 'bg-brand-500' : 'bg-[#d1d0cc]'} relative flex-shrink-0`}>

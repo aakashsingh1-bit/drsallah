@@ -407,7 +407,21 @@ exports.getModuleWithLessons = async (req, res) => {
 
 // POST /courses/:courseId/modules
 exports.createModule = async (req, res) => {
-  const module = await Module.create({ ...req.body, course: req.params.courseId });
+  // Auto-calculate order: next number after the highest existing order in this course
+  const lastModule = await Module.findOne({ course: req.params.courseId })
+    .sort({ order: -1 })
+    .select('order');
+  const nextOrder = (lastModule?.order ?? -1) + 1;
+
+  // Auto-set scheduledAt to now if not provided
+  const scheduledAt = req.body.scheduledAt || new Date();
+
+  const module = await Module.create({
+    ...req.body,
+    order: nextOrder,
+    scheduledAt,
+    course: req.params.courseId,
+  });
   res.status(201).json({ success: true, data: module });
 };
 
@@ -514,7 +528,22 @@ exports.createLesson = async (req, res) => {
   const module = await Module.findById(req.params.moduleId);
   if (!module) return res.status(404).json({ success: false, message: 'Module not found' });
 
-  const lesson = await Lesson.create({ ...req.body, module: module._id, course: module.course });
+  // Auto-calculate order: next number after the highest existing order in this module
+  const lastLesson = await Lesson.findOne({ module: module._id })
+    .sort({ order: -1 })
+    .select('order');
+  const nextOrder = (lastLesson?.order ?? -1) + 1;
+
+  // Auto-set scheduledAt to now if not provided
+  const scheduledAt = req.body.scheduledAt || new Date();
+
+  const lesson = await Lesson.create({
+    ...req.body,
+    order: nextOrder,
+    scheduledAt,
+    module: module._id,
+    course: module.course,
+  });
 
   // Update counters
   await Promise.all([
@@ -654,6 +683,231 @@ exports.uploadVideoDirectly = async (req, res) => {
   }
 
   res.json({ success: true, message: 'Video uploaded to S3 successfully', data: { lessonId, key, lesson } });
+};
+
+// ════════════════════════════════════════════════════════════════
+// VIDEO IMPORT FROM URL (Google Drive, direct links, etc.)
+// ════════════════════════════════════════════════════════════════
+// POST /videos/import-url/:lessonId
+// Body: { url: "https://drive.google.com/..." }
+//
+// The server downloads the file from the URL and uploads it to S3 using
+// streaming multipart upload. This avoids tying up the admin's browser
+// connection and is ideal for files >5GB.
+exports.importVideoFromUrl = async (req, res) => {
+  const { lessonId } = req.params;
+  const { url, duration } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ success: false, message: 'URL is required' });
+  }
+
+  const lesson = await Lesson.findById(lessonId);
+  if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+
+  // Start the import asynchronously — respond immediately with a job ID
+  // The frontend can poll or we can use a webhook/socket for completion.
+  const jobId = `import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  // Store job info in memory (for simplicity; in production use Redis/DB)
+  if (!global.importJobs) global.importJobs = new Map();
+  global.importJobs.set(jobId, {
+    status: 'downloading',
+    progress: 0,
+    lessonId,
+    url,
+    startedAt: new Date(),
+  });
+
+  // Execute the download + upload in the background
+  const { s3StreamStorage } = require('../services/s3StreamStorage');
+  const https = require('https');
+  const http = require('http');
+  const { URL: UrlParser } = require('url');
+  const path = require('path');
+
+  (async () => {
+    try {
+      const parsedUrl = new UrlParser(url);
+      const httpModule = parsedUrl.protocol === 'https:' ? https : http;
+
+      // Initiate S3 multipart upload directly (reuse s3StreamStorage logic)
+      const ext = path.extname(parsedUrl.pathname) || '.mp4';
+      const key = `videos/${lessonId}/${require('uuid').v4()}${ext}`;
+
+      const {
+        S3Client,
+        CreateMultipartUploadCommand,
+        UploadPartCommand,
+        CompleteMultipartUploadCommand,
+        AbortMultipartUploadCommand,
+      } = require('@aws-sdk/client-s3');
+      const { NodeHttpHandler } = require('@smithy/node-http-handler');
+
+      const s3 = new S3Client({
+        region: process.env.AWS_REGION || 'us-east-1',
+        credentials: {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        },
+        requestHandler: new NodeHttpHandler({
+          connectionTimeout: 300_000,
+          requestTimeout: 300_000,
+          socketTimeout: 300_000,
+        }),
+        maxAttempts: 3,
+      });
+
+      const bucket = process.env.AWS_S3_BUCKET;
+      const partSize = 50 * 1024 * 1024; // 50MB
+      const concurrency = 5;
+
+      const { UploadId } = await s3.send(new CreateMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        ContentType: 'video/mp4',
+        Metadata: { originalName: url, importedFrom: url },
+        ServerSideEncryption: 'AES256',
+      }));
+
+      const uploadedParts = [];
+      let partNumber = 0;
+      let totalBytes = 0;
+      const activeUploads = new Set();
+
+      const uploadPart = async (partBuf, partNum) => {
+        const { ETag } = await s3.send(new UploadPartCommand({
+          Bucket: bucket, Key: key, PartNumber: partNum, UploadId, Body: partBuf,
+        }));
+        uploadedParts.push({ ETag, PartNumber: partNum });
+        totalBytes += partBuf.length;
+      };
+
+      const dispatchUpload = (partBuf, partNum) => {
+        const promise = uploadPart(partBuf, partNum).finally(() => activeUploads.delete(promise));
+        activeUploads.add(promise);
+      };
+
+      const waitForAllUploads = async () => {
+        if (activeUploads.size > 0) await Promise.all(activeUploads);
+      };
+
+      // Download the file and stream to S3
+      await new Promise((resolve, reject) => {
+        httpModule.get(url, (response) => {
+          // Handle redirects
+          if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+            // Follow redirect
+            httpModule.get(response.headers.location, (res2) => {
+              downloadStream(res2, resolve, reject);
+            }).on('error', reject);
+            return;
+          }
+          downloadStream(response, resolve, reject);
+        }).on('error', reject);
+
+        function downloadStream(stream, resolve, reject) {
+          let currentChunk = Buffer.alloc(0);
+          let downloadedBytes = 0;
+          const contentLength = parseInt(stream.headers['content-length'] || '0', 10);
+
+          stream.on('data', (chunk) => {
+            currentChunk = Buffer.concat([currentChunk, chunk]);
+            downloadedBytes += chunk.length;
+
+            // Update progress
+            const job = global.importJobs.get(jobId);
+            if (job) {
+              job.downloadedBytes = downloadedBytes;
+              if (contentLength > 0) {
+                job.progress = Math.round((downloadedBytes / contentLength) * 50); // 0-50% = download
+              }
+            }
+
+            // Flush complete parts
+            while (currentChunk.length >= partSize) {
+              partNumber++;
+              const partBuffer = currentChunk.subarray(0, partSize);
+              currentChunk = currentChunk.subarray(partSize);
+              dispatchUpload(partBuffer, partNumber);
+            }
+          });
+
+          stream.on('end', async () => {
+            try {
+              // Mark download complete
+              const job = global.importJobs.get(jobId);
+              if (job) job.status = 'uploading';
+
+              await waitForAllUploads();
+
+              // Upload final chunk
+              if (currentChunk.length > 0) {
+                partNumber++;
+                await uploadPart(currentChunk, partNumber);
+              }
+
+              if (uploadedParts.length === 0) {
+                await uploadPart(Buffer.alloc(0), 1);
+              }
+
+              // Complete multipart
+              await s3.send(new CompleteMultipartUploadCommand({
+                Bucket: bucket, Key: key, UploadId,
+                MultipartUpload: { Parts: uploadedParts },
+              }));
+
+              // Update lesson in DB
+              const newDuration = duration ? parseInt(duration) : 0;
+              lesson.videoKey = key;
+              lesson.uploadStatus = 'ready';
+              lesson.videoSize = totalBytes;
+              lesson.duration = newDuration;
+              await lesson.save();
+
+              if (job) {
+                job.status = 'completed';
+                job.progress = 100;
+                job.key = key;
+                job.size = totalBytes;
+              }
+
+              resolve();
+            } catch (err) {
+              try { await s3.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId })); } catch {}
+              if (global.importJobs.get(jobId)) global.importJobs.get(jobId).status = 'failed';
+              reject(err);
+            }
+          });
+
+          stream.on('error', async (err) => {
+            try { await s3.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId })); } catch {}
+            if (global.importJobs.get(jobId)) global.importJobs.get(jobId).status = 'failed';
+            reject(err);
+          });
+        }
+      });
+    } catch (err) {
+      console.error('Import error:', err);
+      const job = global.importJobs.get(jobId);
+      if (job) job.status = 'failed';
+    }
+  })();
+
+  res.json({
+    success: true,
+    message: 'Video import started. Use the jobId to track progress.',
+    data: { jobId, lessonId },
+  });
+};
+
+// GET /videos/import-status/:jobId
+exports.getImportStatus = async (req, res) => {
+  const { jobId } = req.params;
+  if (!global.importJobs || !global.importJobs.has(jobId)) {
+    return res.status(404).json({ success: false, message: 'Job not found' });
+  }
+  res.json({ success: true, data: global.importJobs.get(jobId) });
 };
 
 // ════════════════════════════════════════════════════════════════
