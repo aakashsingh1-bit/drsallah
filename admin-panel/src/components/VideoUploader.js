@@ -9,7 +9,7 @@ import { IconUpload, IconVideo, IconCheckCircle, IconX, IconClock, IconAlertCirc
 const CHUNK_SIZE = 50 * 1024 * 1024;
 // Upload up to 6 chunks in parallel for maximum throughput
 // Most ISPs and S3 handle 6 concurrent connections well
-const CONCURRENCY = 6;
+const CONCURRENCY = 10;
 
 export default function VideoUploader({ lesson, onClose, onUploaded }) {
   const [file, setFile] = useState(null);
