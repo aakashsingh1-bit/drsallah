@@ -753,21 +753,30 @@ const createDownloadStream = (url, isGoogleDrive, jobId) => {
         }
 
         // Google Drive: handle virus scan confirmation page
-        // When the file is large, Google returns an HTML page with a form
-        // containing a confirm parameter. We need to extract it and retry.
+        // When the file is large (>100MB), Google shows a "Virus scan warning" page
+        // with a form containing hidden inputs: confirm=t, uuid=xxxx.
+        // We extract these values and submit the form to get the actual file.
         if (isGoogleDrive && response.headers['content-type']?.includes('text/html')) {
           let html = '';
           response.on('data', (chunk) => { html += chunk.toString(); });
           response.on('end', () => {
-            // Look for the confirm parameter in the HTML
-            const confirmMatch = html.match(/confirm=([a-zA-Z0-9_-]+)/);
-            if (confirmMatch) {
-              const parsed = new UrlParser(targetUrl);
-              // Add the confirm parameter to the URL
-              const confirmUrl = `${parsed.origin}${parsed.pathname}?id=${new URLSearchParams(parsed.search).get('id')}&export=download&confirm=${confirmMatch[1]}`;
+            // Extract hidden input values from the form
+            const idMatch = html.match(/name="id"\s+value="([^"]+)"/);
+            const confirmMatch = html.match(/name="confirm"\s+value="([^"]+)"/);
+            const uuidMatch = html.match(/name="uuid"\s+value="([^"]+)"/);
+            const actionMatch = html.match(/action="([^"]+)"/);
+
+            if (confirmMatch && idMatch) {
+              const actionUrl = actionMatch ? actionMatch[1] : 'https://drive.usercontent.google.com/download';
+              const confirmUrl = `${actionUrl}?id=${idMatch[1]}&export=download&confirm=${confirmMatch[1]}${uuidMatch ? '&uuid=' + uuidMatch[1] : ''}`;
               doRequest(confirmUrl);
             } else {
-              reject(new Error('Google Drive returned HTML instead of file. Make sure the file is shared with "Anyone with the link".'));
+              // Check if it's the Google Drive file viewer page (not a download link)
+              if (html.includes('Google Drive - Virus scan warning')) {
+                reject(new Error('Google Drive requires virus scan confirmation for this file. The server attempted to bypass it but failed. Try using a direct file hosting service instead.'));
+              } else {
+                reject(new Error('Google Drive returned HTML instead of file. Make sure the file is shared with "Anyone with the link".'));
+              }
             }
           });
           return;
