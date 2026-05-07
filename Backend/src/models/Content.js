@@ -68,7 +68,7 @@ const lessonSchema = new mongoose.Schema(
     videoSize: { type: Number, default: 0 }, // bytes
     uploadStatus: {
       type: String,
-      enum: ['none', 'pending', 'ready', 'failed'],
+      enum: ['none', 'pending', 'uploading', 'ready', 'failed'],
       default: 'none',
     },
     isEncrypted: { type: Boolean, default: false },
