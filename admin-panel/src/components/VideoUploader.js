@@ -79,7 +79,10 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
       key = initData.key;
       partUrls = initData.partUrls; // [{ partNumber, url }]
       
-      // 2. Upload each chunk directly to S3
+      // 2. Upload each chunk directly to S3 via presigned URL
+      // Uses XMLHttpRequest instead of fetch for:
+      //   - Better CORS compatibility (no preflight for simple PUT)
+      //   - Reliable ETag extraction from response headers
       const uploadedParts = [];
       
       for (let i = 0; i < partUrls.length; i++) {
@@ -98,19 +101,30 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
         const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
-        // Upload chunk directly to S3 via presigned URL
-        const uploadRes = await fetch(presignedUrl, {
-          method: 'PUT',
-          body: chunk,
-          headers: { 'Content-Type': file.type || 'video/mp4' },
+        // Upload chunk directly to S3 via presigned URL using XMLHttpRequest
+        // IMPORTANT: Do NOT set Content-Type header — the presigned URL already
+        // encodes the content type. Sending a custom Content-Type triggers a
+        // CORS preflight (OPTIONS) which may fail if S3 CORS isn't configured.
+        const etag = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', presignedUrl, true);
+          
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              // Extract ETag from response header
+              const etagHeader = xhr.getResponseHeader('ETag');
+              resolve(etagHeader);
+            } else {
+              reject(new Error(`Part ${partNum} upload failed with status ${xhr.status}`));
+            }
+          };
+          
+          xhr.onerror = () => reject(new Error(`Part ${partNum} upload failed (network error)`));
+          xhr.ontimeout = () => reject(new Error(`Part ${partNum} upload timed out`));
+          
+          xhr.send(chunk);
         });
 
-        if (!uploadRes.ok) {
-          throw new Error(`Part ${partNum} upload failed with status ${uploadRes.status}`);
-        }
-
-        // Get ETag from response headers
-        const etag = uploadRes.headers.get('ETag');
         uploadedParts.push({ ETag: etag, PartNumber: partNum });
 
         // Update progress

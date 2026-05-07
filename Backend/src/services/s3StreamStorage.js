@@ -23,6 +23,10 @@ const s3 = new S3Client({
     socketTimeout: 300_000,       // 5 min — idle socket timeout
   }),
   maxAttempts: 3,                 // Retry failed parts automatically
+  // Disable flexible checksums — they add x-amz-checksum-* query params that
+  // cause CORS issues when browsers upload directly to S3 via presigned URLs.
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
 });
 
 const BUCKET = process.env.AWS_S3_BUCKET;
