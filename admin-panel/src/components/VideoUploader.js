@@ -98,14 +98,16 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
     setProgress(0);
 
     try {
-      const { data } = await videoAPI.importFromUrl(lesson._id, { url: importUrl, duration: duration || 0 });
-      setJobId(data.jobId);
+      const response = await videoAPI.importFromUrl(lesson._id, { url: importUrl, duration: duration || 0 });
+      const jobId = response.data.data?.jobId;
+      setJobId(jobId);
       toast.success('Import started! Tracking progress...');
 
       // Poll for progress
       pollRef.current = setInterval(async () => {
         try {
-          const { data: job } = await videoAPI.getImportStatus(data.jobId);
+          const response = await videoAPI.getImportStatus(jobId);
+          const job = response.data.data; // { status, progress, ... }
           setProgress(job.progress || 0);
 
           if (job.status === 'completed') {
