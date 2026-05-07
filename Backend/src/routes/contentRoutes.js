@@ -29,6 +29,9 @@ const {
   getVideoUploadPresignedUrl,
   confirmVideoUpload,
   uploadVideoDirectly,
+  initDirectMultipartUpload,
+  completeDirectMultipartUpload,
+  abortDirectMultipartUpload,
   importVideoFromUrl,
   getImportStatus,
   // Streaming
@@ -659,6 +662,13 @@ const videoUpload = multer({
 });
 
 router.post('/videos/upload/:lessonId', protect, adminOnly, videoUpload.single('video'), uploadVideoDirectly);
+
+// ─── Direct Browser-to-S3 Multipart Upload (like YouTube) ─────────────────
+// The browser splits the file into 10MB chunks and uploads each chunk directly
+// to S3 via presigned URLs. This bypasses the server entirely for upload data.
+router.post('/videos/direct-multipart/init', protect, adminOnly, initDirectMultipartUpload);
+router.post('/videos/direct-multipart/complete', protect, adminOnly, completeDirectMultipartUpload);
+router.post('/videos/direct-multipart/abort', protect, adminOnly, abortDirectMultipartUpload);
 
 // ─── Video Import from URL (Google Drive, direct links, etc.) ──────────────
 // For large files >5GB, use this instead of direct browser upload.

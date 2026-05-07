@@ -1,15 +1,21 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { videoAPI } from '../api';
 import toast from 'react-hot-toast';
 import { IconUpload, IconVideo, IconCheckCircle, IconX, IconClock, IconAlertCircle } from './Icons';
 
+// 10MB per chunk — AWS supports up to 10,000 parts, so this handles up to ~100GB
+const CHUNK_SIZE = 50 * 1024 * 1024;
+// Upload up to 3 chunks in parallel for faster throughput
+const CONCURRENCY = 3;
+
 export default function VideoUploader({ lesson, onClose, onUploaded }) {
   const [file, setFile] = useState(null);
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState('idle');
+  const [status, setStatus] = useState('idle'); // idle | uploading | done | error
   const [duration, setDuration] = useState(null);
   const [fileSize, setFileSize] = useState(null);
+  const abortRef = useRef(false);
 
   const onDrop = useCallback((accepted) => { 
     if (accepted[0]) {
@@ -17,7 +23,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
       setFile(videoFile);
       setFileSize(videoFile.size);
       
-      // Get video duration
+      // Get video duration from metadata
       const video = document.createElement('video');
       video.preload = 'metadata';
       video.onloadedmetadata = () => {
@@ -50,27 +56,120 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  // ── Server-Proxy Upload ────────────────────────────────────────────────
-  // File goes: Browser → Server (s3StreamStorage) → S3 (multipart upload)
-  // The server streams the file directly to S3 without writing to disk.
+  // ── Upload a single chunk to S3 via presigned URL ──────────────────────
+  // Uses XMLHttpRequest (not fetch) to avoid CORS preflight issues.
+  // Does NOT set Content-Type header — the presigned URL already encodes it.
+  const uploadChunk = (presignedUrl, chunk) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', presignedUrl, true);
+      
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const etag = xhr.getResponseHeader('ETag');
+          resolve(etag);
+        } else {
+          reject(new Error(`Upload failed with status ${xhr.status}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Network error'));
+      xhr.ontimeout = () => reject(new Error('Timed out'));
+      
+      xhr.send(chunk);
+    });
+  };
+
+  // ── Direct Browser-to-S3 Multipart Upload ──────────────────────────────
+  // Like YouTube: browser splits file into 10MB chunks, uploads each chunk
+  // directly to S3 via presigned URLs. Server only handles init/complete.
   const uploadVideo = async () => {
     if (!file) return toast.error('Select a video file first');
+    
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     setStatus('uploading');
     setProgress(0);
-    
-    const fd = new FormData();
-    fd.append('video', file);
-    fd.append('duration', duration || 0);
-    
+    abortRef.current = false;
+
+    let uploadId, key, partUrls;
+
     try {
-      await videoAPI.uploadDirect(lesson._id, fd, p => setProgress(p));
+      // 1. Init: tell server to start multipart upload, get presigned URLs
+      const initRes = await videoAPI.initMultipartUpload({
+        lessonId: lesson._id,
+        filename: file.name,
+        fileSize: file.size,
+        contentType: file.type || 'video/mp4',
+      });
+      const initData = initRes.data.data;
+      uploadId = initData.uploadId;
+      key = initData.key;
+      partUrls = initData.partUrls; // [{ partNumber, url }]
+      
+      // 2. Upload chunks concurrently (like YouTube does)
+      const uploadedParts = [];
+      let nextIndex = 0;
+      let completedCount = 0;
+
+      const uploadNext = async () => {
+        while (nextIndex < partUrls.length && !abortRef.current) {
+          const i = nextIndex++;
+          const { partNumber, url } = partUrls[i];
+          
+          // Slice the chunk from the file
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+
+          // Upload directly to S3
+          const etag = await uploadChunk(url, chunk);
+          uploadedParts.push({ ETag: etag, PartNumber: partNumber });
+
+          // Update progress (atomic counter)
+          completedCount++;
+          const pct = Math.round((completedCount / partUrls.length) * 100);
+          setProgress(pct);
+        }
+      };
+
+      // Launch concurrent uploaders
+      const workers = [];
+      for (let w = 0; w < Math.min(CONCURRENCY, partUrls.length); w++) {
+        workers.push(uploadNext());
+      }
+      await Promise.all(workers);
+
+      if (abortRef.current) {
+        await videoAPI.abortMultipartUpload({ key, uploadId }).catch(() => {});
+        setStatus('idle');
+        setProgress(0);
+        return;
+      }
+
+      // Sort parts by PartNumber (they may complete out of order)
+      uploadedParts.sort((a, b) => a.PartNumber - b.PartNumber);
+
+      // 3. Complete: tell server to assemble all parts
+      await videoAPI.completeMultipartUpload({
+        lessonId: lesson._id,
+        key,
+        uploadId,
+        parts: uploadedParts,
+        duration: duration || 0,
+      });
+
       setStatus('done');
       toast.success('Video uploaded to S3 successfully');
       setTimeout(() => onUploaded?.(), 1500);
     } catch (err) {
       console.error('Upload error:', err);
+      
+      // Abort multipart upload on failure
+      if (uploadId && key) {
+        await videoAPI.abortMultipartUpload({ key, uploadId }).catch(() => {});
+      }
+      
       setStatus('error');
-      toast.error(err.response?.data?.message || 'Upload failed');
+      toast.error(err.response?.data?.message || err.message || 'Upload failed');
     }
   };
 
@@ -93,7 +192,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
 
         <div className="p-5 space-y-5">
 
-          {/* Dropzone */}
+          {/* ── Dropzone ───────────────────────────────────────────────── */}
           {!isDone && (
             <>
               <div
@@ -142,7 +241,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
                       <p className="text-[14px] font-semibold text-[#1c1d1f]">
                         {isDragActive ? 'Drop video here' : 'Drop video or click to browse'}
                       </p>
-                      <p className="text-[12px] text-[#9e9e9e] mt-2">MP4, WebM, MOV, AVI — up to 10GB</p>
+                      <p className="text-[12px] text-[#9e9e9e] mt-2">MP4, WebM, MOV, AVI — any size supported</p>
                     </div>
                   </div>
                 )}
@@ -160,11 +259,11 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
             </>
           )}
 
-          {/* Progress */}
+          {/* ── Progress ───────────────────────────────────────────────── */}
           {isUploading && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-[#6a6f73]">Uploading to server...</span>
+                <span className="text-[#6a6f73]">Uploading directly to S3...</span>
                 <span className="text-[#1c1d1f] font-semibold">{progress}%</span>
               </div>
               <div className="h-2 bg-[#f0ece4] rounded-full overflow-hidden">
@@ -174,16 +273,12 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
                 />
               </div>
               <p className="text-[11px] text-[#9e9e9e] text-center">
-                {fileSize > 1024 * 1024 * 1024 ? (
-                  <>Large file — this may take several minutes. Do not close this page.</>
-                ) : (
-                  <>Uploading to S3 via server...</>
-                )}
+                Uploading {Math.ceil(fileSize / CHUNK_SIZE)} chunks directly to S3 — no server bottleneck
               </p>
             </div>
           )}
 
-          {/* Done */}
+          {/* ── Done ───────────────────────────────────────────────────── */}
           {isDone && (
             <div className="text-center py-6 space-y-3">
               <div className="w-16 h-16 rounded-2xl bg-emerald-100 flex items-center justify-center mx-auto">
@@ -199,7 +294,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
             </div>
           )}
 
-          {/* Error */}
+          {/* ── Error ──────────────────────────────────────────────────── */}
           {isError && (
             <div className="flex items-center gap-3 p-3 rounded-xl bg-red-50 border border-red-200">
               <IconAlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
@@ -209,7 +304,7 @@ export default function VideoUploader({ lesson, onClose, onUploaded }) {
             </div>
           )}
 
-          {/* Actions */}
+          {/* ── Actions ────────────────────────────────────────────────── */}
           {!isDone && (
             <div className="flex gap-3">
               <button onClick={onClose} className="btn-secondary flex-1" disabled={isUploading}>
