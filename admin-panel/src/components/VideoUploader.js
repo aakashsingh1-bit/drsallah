@@ -6,10 +6,10 @@ import { IconUpload, IconVideo, IconCheckCircle, IconX, IconClock, IconAlertCirc
 
 // 50MB per chunk — fewer parts = fewer round trips = much faster upload
 // AWS supports up to 10,000 parts, so 50MB handles up to ~500GB
-const CHUNK_SIZE = 100 * 1024 * 1024;
+const CHUNK_SIZE = 50 * 1024 * 1024;
 // Upload up to 6 chunks in parallel for maximum throughput
 // Most ISPs and S3 handle 6 concurrent connections well
-const CONCURRENCY = 10;
+const CONCURRENCY = 6;
 
 export default function VideoUploader({ lesson, onClose, onUploaded }) {
   const [file, setFile] = useState(null);
