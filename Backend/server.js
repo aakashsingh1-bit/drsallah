@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   await connectDB();
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log('');
     console.log('╔══════════════════════════════════════════════════╗');
     console.log('║      Dr. Sallah Education Platform API           ║');
@@ -21,6 +21,23 @@ const startServer = async () => {
     console.log('╚══════════════════════════════════════════════════╝');
     console.log('');
   });
+
+  // ─── Server Timeouts ─────────────────────────────────────────────────────
+  // Default Node.js HTTP server timeout is 0 (no timeout), but we set a
+  // generous 30-minute timeout for large video uploads.
+  // This prevents the server from closing idle connections during long uploads.
+  server.timeout = 30 * 60 * 1000; // 30 minutes
+
+  // Keep-alive timeout — how long to wait for additional data on the same
+  // connection after the last data chunk. Set to 5 minutes for upload streams.
+  server.keepAliveTimeout = 5 * 60 * 1000; // 5 minutes
+
+  // Maximum headers timeout
+  server.headersTimeout = 60 * 1000; // 1 minute
+
+  // ── Request timeout (Express 5+ / connect) ───────────────────────────────
+  // For Express 4, we handle request timeouts via middleware in app.js.
+  // The server.timeout above is the primary mechanism for Node's http.Server.
 
   // Start background jobs
   startSubscriptionJobs();
