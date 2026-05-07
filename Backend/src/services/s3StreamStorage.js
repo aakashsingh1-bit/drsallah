@@ -194,27 +194,6 @@ const s3StreamStorage = (opts = {}) => {
           try { await s3.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId })); } catch {}
           reject(err);
         });
-
-        // ── Periodic backpressure check ────────────────────────────────────
-        // If the upload queue is full and we're accumulating too much data in
-        // currentChunk, we apply backpressure by pausing the stream temporarily.
-        // This is a safety net — under normal conditions the stream runs freely.
-        file.stream.on('readable', () => {
-          if (activeUploads.size >= concurrency && currentChunk.length > partSize * 3) {
-            // Too much buffered data — apply temporary backpressure
-            file.stream.pause();
-
-            // Resume once a slot opens up
-            const checkAndResume = () => {
-              if (activeUploads.size < concurrency || currentChunk.length <= partSize * 2) {
-                file.stream.resume();
-              } else {
-                setImmediate(checkAndResume);
-              }
-            };
-            checkAndResume();
-          }
-        });
       });
     })()
       .then((result) => cb(null, result))
