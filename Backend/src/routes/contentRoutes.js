@@ -4,6 +4,7 @@ const multer = require('multer');
 const {
   // Courses
   getAllCourses,
+  getMyLearning,
   getCourseById,
   getCourseFullContent,
   createCourse,
@@ -78,6 +79,8 @@ const upload = multer({
  * tags:
  *   - name: Courses
  *     description: Course listing and management
+ *   - name: My Learning
+ *     description: Enrolled courses for the logged-in student
  *   - name: Course Content
  *     description: Full course content for students (modules + lessons in one call)
  *   - name: Modules
@@ -140,6 +143,70 @@ const upload = multer({
 router.route('/courses')
   .get(protect, getAllCourses)
   .post(protect, adminOnly, upload.single('thumbnail'), createCourse);
+
+/**
+ * @openapi
+ * /courses/my-learning:
+ *   get:
+ *     tags: [My Learning]
+ *     summary: Get my active enrolled courses
+ *     description: |
+ *       Returns all courses the logged-in user currently has active access to (paid enrollments).
+ *       Each item includes full course details (title, description, banner/thumbnail image, category,
+ *       instructor, level, duration, lessons count, rating), enrollment dates, days remaining, and
+ *       learning progress from watch history.
+ *     responses:
+ *       200:
+ *         description: List of active enrolled courses
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 total: { type: integer, example: 2 }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       enrollment:
+ *                         type: object
+ *                         properties:
+ *                           purchaseId: { type: string }
+ *                           status: { type: string, example: active }
+ *                           startDate: { type: string, format: date-time }
+ *                           endDate: { type: string, format: date-time }
+ *                           months: { type: integer }
+ *                           daysRemaining: { type: integer }
+ *                       course:
+ *                         type: object
+ *                         properties:
+ *                           _id: { type: string }
+ *                           title: { type: string }
+ *                           description: { type: string }
+ *                           thumbnail: { type: string, description: Signed banner image URL }
+ *                           category: { type: string }
+ *                           instructor: { type: string }
+ *                           level: { type: string }
+ *                           language: { type: string }
+ *                           totalLessons: { type: integer }
+ *                           totalDuration: { type: integer, description: Total duration in seconds }
+ *                           rating:
+ *                             type: object
+ *                             properties:
+ *                               average: { type: number }
+ *                               count: { type: integer }
+ *                       progress:
+ *                         type: object
+ *                         properties:
+ *                           watchedLessons: { type: integer }
+ *                           totalLessons: { type: integer }
+ *                           percentComplete: { type: integer }
+ *                           lastWatchedAt: { type: string, format: date-time, nullable: true }
+ *                           lastLessonId: { type: string, nullable: true }
+ */
+router.get('/courses/my-learning', protect, getMyLearning);
 
 /**
  * @openapi

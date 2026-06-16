@@ -179,6 +179,88 @@ exports.getAllCourses = async (req, res) => {
   res.json({ success: true, data, pagination: { total, page: +page, limit: +limit } });
 };
 
+// GET /courses/my-learning — active enrolled courses for current user
+exports.getMyLearning = async (req, res) => {
+  await CoursePurchase.updateMany(
+    { user: req.user._id, status: 'active', endDate: { $lt: new Date() } },
+    { status: 'expired' }
+  );
+
+  const purchases = await CoursePurchase.find({
+    user: req.user._id,
+    status: 'active',
+    endDate: { $gte: new Date() },
+  })
+    .populate({
+      path: 'course',
+      match: { isPublished: true },
+    })
+    .sort({ endDate: -1 });
+
+  const user = await User.findById(req.user._id).select('watchHistory');
+  const watchHistory = user?.watchHistory || [];
+
+  const now = Date.now();
+  const data = [];
+
+  for (const purchase of purchases) {
+    if (!purchase.course) continue;
+
+    const courseObj = purchase.course.toObject();
+    if (courseObj.thumbnailKey) {
+      courseObj.thumbnail = await safeSignedUrl(courseObj.thumbnailKey, EXPIRY()) || courseObj.thumbnail;
+    }
+    delete courseObj.thumbnailKey;
+    delete courseObj.priceTiers;
+
+    await attachCourseRating(courseObj);
+
+    const publishedLessons = await Lesson.find({
+      course: courseObj._id,
+      isPublished: true,
+    }).select('_id duration');
+
+    const lessonIdSet = new Set(publishedLessons.map((l) => l._id.toString()));
+    const watchedInCourse = watchHistory.filter((h) => lessonIdSet.has(h.lesson.toString()));
+    const watchedLessonIds = new Set(watchedInCourse.map((h) => h.lesson.toString()));
+    const totalLessons = publishedLessons.length;
+    const watchedLessons = watchedLessonIds.size;
+    const percentComplete = totalLessons > 0 ? Math.round((watchedLessons / totalLessons) * 100) : 0;
+
+    const lastWatched = watchedInCourse.length
+      ? watchedInCourse.reduce((latest, entry) =>
+          new Date(entry.watchedAt) > new Date(latest.watchedAt) ? entry : latest
+        )
+      : null;
+
+    const daysRemaining = Math.max(
+      0,
+      Math.ceil((new Date(purchase.endDate).getTime() - now) / (1000 * 60 * 60 * 24))
+    );
+
+    data.push({
+      enrollment: {
+        purchaseId: purchase._id,
+        status: purchase.status,
+        startDate: purchase.startDate,
+        endDate: purchase.endDate,
+        months: purchase.months,
+        daysRemaining,
+      },
+      course: courseObj,
+      progress: {
+        watchedLessons,
+        totalLessons,
+        percentComplete,
+        lastWatchedAt: lastWatched?.watchedAt || null,
+        lastLessonId: lastWatched?.lesson || null,
+      },
+    });
+  }
+
+  res.json({ success: true, data, total: data.length });
+};
+
 // GET /courses/:id  — course + shallow module list (no lessons)
 exports.getCourseById = async (req, res) => {
   const isAdmin = req.user?.role === 'admin';
