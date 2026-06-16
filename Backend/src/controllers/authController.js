@@ -225,22 +225,12 @@ exports.getMe = async (req, res) => {
 
 // ─── Delete Account (Self-service) ─────────────────────────────────────────────
 exports.deleteAccount = async (req, res) => {
-  const { password } = req.body;
-
-  if (!password) {
-    return res.status(400).json({ success: false, message: 'Password is required to delete your account' });
-  }
-
-  const user = await User.findById(req.user._id).select('+password');
-  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-
-  if (!(await user.comparePassword(password))) {
-    return res.status(401).json({ success: false, message: 'Incorrect password' });
-  }
-
   try {
-    await deleteUserAccount(user._id, { source: 'self', ip: req.ip });
+    await deleteUserAccount(req.user._id, { source: 'self', ip: req.ip });
   } catch (err) {
+    if (err.code === 'USER_NOT_FOUND') {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
     if (err.code === 'ALREADY_DELETED') {
       return res.status(400).json({ success: false, message: 'Account already deleted' });
     }

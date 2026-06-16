@@ -206,19 +206,7 @@ router.get('/me', protect, getMe);
  *       device binding, watch history, bookmarks, sessions, and notifications).
  *       Security and activity logs are retained in the admin panel for audit purposes.
  *       The original email is freed so you can register a new account with the same email.
- *       Requires password confirmation.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [password]
- *             properties:
- *               password:
- *                 type: string
- *                 description: Current account password for confirmation
- *                 example: Secret123
+ *       Requires a valid access token only — no password needed.
  *     responses:
  *       200:
  *         description: Account deleted successfully
@@ -230,9 +218,7 @@ router.get('/me', protect, getMe);
  *                 success: { type: boolean, example: true }
  *                 message: { type: string }
  *       400:
- *         description: Password missing or account already deleted
- *       401:
- *         description: Incorrect password
+ *         description: Account already deleted
  *       403:
  *         description: Admin accounts cannot be self-deleted
  */
