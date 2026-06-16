@@ -3,6 +3,7 @@ const SecurityLog = require('../models/SecurityLog');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../services/tokenService');
 const { generateOTP, getOTPExpiry } = require('../services/otpService');
 const { sendOTPEmail, sendSecurityAlertEmail } = require('../services/emailService');
+const { deleteUserAccount } = require('../services/accountDeletionService');
 
 // ─── Register ──────────────────────────────────────────────────────────────────
 exports.register = async (req, res) => {
@@ -63,6 +64,10 @@ exports.login = async (req, res) => {
   if (!user || !(await user.comparePassword(password))) {
     await SecurityLog.create({ event: 'login_failed', ip, details: { email }, severity: 'warning' });
     return res.status(401).json({ success: false, message: 'Invalid credentials' });
+  }
+
+  if (user.deletedAt) {
+    return res.status(403).json({ success: false, message: 'This account has been deleted' });
   }
 
   if (!user.isVerified) {
@@ -144,6 +149,10 @@ exports.refreshToken = async (req, res) => {
     return res.status(401).json({ success: false, message: 'Refresh token revoked' });
   }
 
+  if (user.deletedAt || !user.isActive) {
+    return res.status(403).json({ success: false, message: 'Account has been deleted or is inactive' });
+  }
+
   // Rotate refresh token
   const newAccessToken = generateAccessToken(user._id, user.role);
   const newRefreshToken = generateRefreshToken(user._id);
@@ -212,6 +221,39 @@ exports.resetPassword = async (req, res) => {
 exports.getMe = async (req, res) => {
   const user = await User.findById(req.user._id).populate('activeSubscription');
   res.json({ success: true, user });
+};
+
+// ─── Delete Account (Self-service) ─────────────────────────────────────────────
+exports.deleteAccount = async (req, res) => {
+  const { password } = req.body;
+
+  if (!password) {
+    return res.status(400).json({ success: false, message: 'Password is required to delete your account' });
+  }
+
+  const user = await User.findById(req.user._id).select('+password');
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+  if (!(await user.comparePassword(password))) {
+    return res.status(401).json({ success: false, message: 'Incorrect password' });
+  }
+
+  try {
+    await deleteUserAccount(user._id, { source: 'self', ip: req.ip });
+  } catch (err) {
+    if (err.code === 'ALREADY_DELETED') {
+      return res.status(400).json({ success: false, message: 'Account already deleted' });
+    }
+    if (err.code === 'CANNOT_DELETE_ADMIN') {
+      return res.status(403).json({ success: false, message: 'Admin accounts cannot be deleted' });
+    }
+    throw err;
+  }
+
+  res.json({
+    success: true,
+    message: 'Your account has been deleted. All personal information has been removed. You may register again with the same email.',
+  });
 };
 
 // ─── Reset Device (Admin triggers on support request) ─────────────────────────

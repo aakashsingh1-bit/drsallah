@@ -4,12 +4,16 @@ const { Course, Lesson } = require('../models/Content');
 const { Subscription } = require('../models/Subscription');
 const { CoursePurchase } = require('../models/CourseAccess');
 const Notification = require('../models/Notification');
+const { deleteUserAccount } = require('../services/accountDeletionService');
 
 // ──────────────────── USER MANAGEMENT ────────────────────────────────────────
 
 exports.getAllUsers = async (req, res) => {
-  const { page = 1, limit = 20, search, isSuspended, isFlagged, role } = req.query;
+  const { page = 1, limit = 20, search, isSuspended, isFlagged, role, includeDeleted } = req.query;
   const filter = {};
+  if (includeDeleted !== 'true') {
+    filter.deletedAt = null;
+  }
   if (search) {
     filter.$or = [
       { name: { $regex: search, $options: 'i' } },
@@ -36,7 +40,25 @@ exports.getUserById = async (req, res) => {
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
   const recentLogs = await SecurityLog.find({ user: user._id }).sort({ createdAt: -1 }).limit(20);
-  res.json({ success: true, data: { user, recentLogs } });
+
+  let deletedUserInfo = null;
+  if (user.deletedAt) {
+    const deletionLog = await SecurityLog.findOne({
+      user: user._id,
+      event: 'account_deleted',
+    }).sort({ createdAt: -1 });
+    if (deletionLog?.details) {
+      deletedUserInfo = {
+        name: deletionLog.details.name,
+        email: deletionLog.details.email,
+        phone: deletionLog.details.phone,
+        deletedAt: deletionLog.details.deletedAt || user.deletedAt,
+        source: deletionLog.details.source,
+      };
+    }
+  }
+
+  res.json({ success: true, data: { user, recentLogs, deletedUserInfo } });
 };
 
 exports.updateUser = async (req, res) => {
@@ -86,12 +108,25 @@ exports.unsuspendUser = async (req, res) => {
 };
 
 exports.deleteUser = async (req, res) => {
-  await User.findByIdAndDelete(req.params.id);
-  await SecurityLog.create({
-    event: 'admin_action',
-    details: { action: 'delete_user', targetUserId: req.params.id, adminId: req.user._id },
-  });
-  res.json({ success: true, message: 'User deleted' });
+  try {
+    await deleteUserAccount(req.params.id, {
+      source: 'admin',
+      adminId: req.user._id,
+      ip: req.ip,
+    });
+  } catch (err) {
+    if (err.code === 'USER_NOT_FOUND') {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    if (err.code === 'ALREADY_DELETED') {
+      return res.status(400).json({ success: false, message: 'User already deleted' });
+    }
+    if (err.code === 'CANNOT_DELETE_ADMIN') {
+      return res.status(403).json({ success: false, message: 'Admin accounts cannot be deleted' });
+    }
+    throw err;
+  }
+  res.json({ success: true, message: 'User deleted. Audit logs preserved.' });
 };
 
 exports.forceLogoutUser = async (req, res) => {
@@ -115,13 +150,36 @@ exports.getSecurityLogs = async (req, res) => {
   if (resolved !== undefined) filter.resolved = resolved === 'true';
 
   const logs = await SecurityLog.find(filter)
-    .populate('user', 'name email')
+    .populate('user', 'name email deletedAt')
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(parseInt(limit));
 
+  const enrichedLogs = await Promise.all(
+    logs.map(async (log) => {
+      const doc = log.toObject();
+      if (doc.user?.deletedAt || doc.event === 'account_deleted') {
+        const deletionLog =
+          doc.event === 'account_deleted'
+            ? doc
+            : await SecurityLog.findOne({ user: doc.user?._id, event: 'account_deleted' })
+                .sort({ createdAt: -1 })
+                .lean();
+        if (deletionLog?.details?.email) {
+          doc.auditUser = {
+            name: deletionLog.details.name,
+            email: deletionLog.details.email,
+            phone: deletionLog.details.phone,
+            deletedAt: deletionLog.details.deletedAt,
+          };
+        }
+      }
+      return doc;
+    })
+  );
+
   const total = await SecurityLog.countDocuments(filter);
-  res.json({ success: true, data: logs, pagination: { total, page: +page, limit: +limit } });
+  res.json({ success: true, data: enrichedLogs, pagination: { total, page: +page, limit: +limit } });
 };
 
 exports.resolveSecurityLog = async (req, res) => {
@@ -152,7 +210,7 @@ exports.getDashboardStats = async (req, res) => {
     totalCoursePurchases,
     activeCoursePurchases,
   ] = await Promise.all([
-    User.countDocuments({ role: 'student' }),
+    User.countDocuments({ role: 'student', deletedAt: null }),
     Subscription.countDocuments({ status: 'active' }),
     Course.countDocuments({ isPublished: true }),
     Lesson.countDocuments({ isPublished: true }),
@@ -162,7 +220,7 @@ exports.getDashboardStats = async (req, res) => {
       severity: 'critical',
       createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
     }),
-    User.find({ role: 'student' }).sort({ createdAt: -1 }).limit(5).select('name email createdAt'),
+    User.find({ role: 'student', deletedAt: null }).sort({ createdAt: -1 }).limit(5).select('name email createdAt'),
     CoursePurchase.countDocuments(),
     CoursePurchase.countDocuments({ status: 'active', endDate: { $gte: new Date() } }),
   ]);
@@ -245,7 +303,7 @@ exports.sendBulkNotification = async (req, res) => {
   if (userIds && userIds.length > 0) {
     targetUsers = userIds;
   } else {
-    const users = await User.find({ role: 'student', isActive: true }).select('_id');
+    const users = await User.find({ role: 'student', isActive: true, deletedAt: null }).select('_id');
     targetUsers = users.map((u) => u._id);
   }
 

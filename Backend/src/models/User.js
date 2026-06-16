@@ -49,9 +49,14 @@ const userSchema = new mongoose.Schema(
 
     // Bookmarks
     bookmarks: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Lesson' }],
+
+    // Account deletion (PII removed; document kept for audit log references)
+    deletedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
+
+userSchema.index({ deletedAt: 1 });
 
 // Hash password before save
 userSchema.pre('save', async function (next) {

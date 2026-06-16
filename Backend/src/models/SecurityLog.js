@@ -31,6 +31,7 @@ const securityLogSchema = new mongoose.Schema(
         'admin_action',
         'course_purchase_activated',
         'course_purchase_failed',
+        'account_deleted',
       ],
       required: true,
     },

@@ -16,6 +16,10 @@ const protect = async (req, res, next) => {
     const user = await User.findById(decoded.id).select('-password -otp -otpExpires -refreshTokens');
     if (!user) return res.status(401).json({ success: false, message: 'User not found' });
 
+    if (user.deletedAt) {
+      return res.status(403).json({ success: false, message: 'Account has been deleted' });
+    }
+
     if (!user.isActive || user.isSuspended) {
       return res.status(403).json({ success: false, message: 'Account suspended or inactive' });
     }

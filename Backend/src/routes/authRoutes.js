@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   register, verifyOTP, login, refreshToken, logout,
-  forgotPassword, resetPassword, getMe, resetDevice,
+  forgotPassword, resetPassword, getMe, resetDevice, deleteAccount,
 } = require('../controllers/authController');
 const { protect, adminOnly } = require('../middleware/auth');
 
@@ -194,6 +194,49 @@ router.post('/reset-password', resetPassword);
  *         description: User profile with subscription info
  */
 router.get('/me', protect, getMe);
+
+/**
+ * @openapi
+ * /auth/deleteAccount:
+ *   delete:
+ *     tags: [Auth]
+ *     summary: Delete your own account (self-service)
+ *     description: |
+ *       Permanently removes all personal information from the account (name, email, phone, password,
+ *       device binding, watch history, bookmarks, sessions, and notifications).
+ *       Security and activity logs are retained in the admin panel for audit purposes.
+ *       The original email is freed so you can register a new account with the same email.
+ *       Requires password confirmation.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [password]
+ *             properties:
+ *               password:
+ *                 type: string
+ *                 description: Current account password for confirmation
+ *                 example: Secret123
+ *     responses:
+ *       200:
+ *         description: Account deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string }
+ *       400:
+ *         description: Password missing or account already deleted
+ *       401:
+ *         description: Incorrect password
+ *       403:
+ *         description: Admin accounts cannot be self-deleted
+ */
+router.delete('/deleteAccount', protect, deleteAccount);
 
 /**
  * @openapi
