@@ -4,13 +4,43 @@ const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = requir
 const { generateOTP, getOTPExpiry } = require('../services/otpService');
 const { sendOTPEmail, sendSecurityAlertEmail } = require('../services/emailService');
 const { deleteUserAccount } = require('../services/accountDeletionService');
+const { isUnverifiedUserStale } = require('../services/unverifiedUserService');
 
 // ─── Register ──────────────────────────────────────────────────────────────────
 exports.register = async (req, res) => {
   const { name, email, phone, password } = req.body;
 
   const exists = await User.findOne({ email });
-  if (exists) return res.status(400).json({ success: false, message: 'Email already registered' });
+  if (exists) {
+    if (exists.isVerified) {
+      return res.status(400).json({ success: false, message: 'Email already registered' });
+    }
+
+    if (!isUnverifiedUserStale(exists)) {
+      const otp = generateOTP();
+      exists.name = name;
+      exists.phone = phone;
+      exists.password = password;
+      exists.otp = otp;
+      exists.otpExpires = getOTPExpiry(5);
+      exists.otpType = 'email_verify';
+      await exists.save();
+
+      try {
+        await sendOTPEmail(email, otp, 'verify');
+      } catch (e) {
+        console.error('Email send failed:', e.message);
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: 'A verification code was sent to your email. Please verify to complete registration.',
+        userId: exists._id,
+      });
+    }
+
+    await User.findByIdAndDelete(exists._id);
+  }
 
   const otp = generateOTP();
   const user = await User.create({
@@ -23,7 +53,6 @@ exports.register = async (req, res) => {
     otpType: 'email_verify',
   });
 
-  // Send OTP
   try {
     await sendOTPEmail(email, otp, 'verify');
   } catch (e) {

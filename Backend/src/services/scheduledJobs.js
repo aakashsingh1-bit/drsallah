@@ -3,6 +3,7 @@ const { Subscription } = require('../models/Subscription');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
 const SecurityLog = require('../models/SecurityLog');
+const { deleteUnverifiedUsers } = require('./unverifiedUserService');
 
 // Run every day at midnight
 const startSubscriptionJobs = () => {
@@ -78,6 +79,18 @@ const startSubscriptionJobs = () => {
 
     if (expiringSoon.length > 0) {
       console.log(`📢 Sent ${expiringSoon.length} expiry warning notifications`);
+    }
+  });
+
+  // ─── Every 15 min: Delete stale unverified registrations ─────────────────
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const deleted = await deleteUnverifiedUsers();
+      if (deleted > 0) {
+        console.log(`🧹 Removed ${deleted} unverified registration(s)`);
+      }
+    } catch (err) {
+      console.error('Unverified user cleanup failed:', err.message);
     }
   });
 };

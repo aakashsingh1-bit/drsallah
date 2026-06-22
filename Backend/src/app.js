@@ -21,6 +21,11 @@ const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
+// Behind nginx / load balancer — required for rate-limit + correct client IP
+if (process.env.TRUST_PROXY !== 'false') {
+  app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1);
+}
+
 // ─── Security Middleware ───────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
