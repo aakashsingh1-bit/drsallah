@@ -15,10 +15,13 @@ const startServer = async () => {
   }
 
   if (process.env.SMTP_HOST) {
+    const smtpUser = process.env.SMTP_USER?.includes('@')
+      ? process.env.SMTP_USER
+      : (process.env.SMTP_USER_EMAIL || process.env.SMTP_USER);
     const from = process.env.SMTP_USER_EMAIL
       ? `${process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform'} <${process.env.SMTP_USER_EMAIL}>`
-      : '(not set — set SMTP_USER_EMAIL)';
-    console.log(`📧 Email: ${process.env.SMTP_HOST} | From: ${from}`);
+      : '(set SMTP_USER_EMAIL)';
+    console.log(`📧 Email: ${process.env.SMTP_HOST}:${process.env.SMTP_PORT || 587} | Auth: ${smtpUser} | From: ${from}`);
   }
 
   const server = app.listen(PORT, () => {

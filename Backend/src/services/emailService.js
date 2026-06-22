@@ -1,15 +1,23 @@
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
-const getSmtpConfig = () => ({
-  host: process.env.SMTP_HOST || process.env.EMAIL_HOST,
-  port: parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT, 10) || 587,
-  user: process.env.SMTP_USER || process.env.EMAIL_USER,
-  pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
-  fromEmail: process.env.SMTP_USER_EMAIL || process.env.EMAIL_FROM?.match(/<([^>]+)>/)?.[1] || process.env.EMAIL_USER,
-  fromName: process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform',
-  replyTo: process.env.EMAIL_REPLY_TO || process.env.SMTP_USER_EMAIL || process.env.EMAIL_FROM?.match(/<([^>]+)>/)?.[1],
-});
+const getSmtpConfig = () => {
+  const rawUser = process.env.SMTP_USER || process.env.EMAIL_USER;
+  const fromEmail = process.env.SMTP_USER_EMAIL;
+
+  // cPanel / hosting SMTP requires the full email address as username (not a short name like "Drsalah")
+  const user = rawUser?.includes('@') ? rawUser : (fromEmail || rawUser);
+
+  return {
+    host: process.env.SMTP_HOST || process.env.EMAIL_HOST,
+    port: parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT, 10) || 587,
+    user,
+    pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
+    fromEmail: fromEmail || rawUser,
+    fromName: process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform',
+    replyTo: process.env.EMAIL_REPLY_TO || fromEmail || rawUser,
+  };
+};
 
 const getFromAddress = () => {
   const { fromEmail, fromName } = getSmtpConfig();
@@ -50,8 +58,10 @@ const createTransport = () => {
     auth: { user, pass },
     tls: {
       minVersion: 'TLSv1.2',
-      rejectUnauthorized: true,
+      rejectUnauthorized: process.env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
     },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
     pool: true,
     maxConnections: 3,
     maxMessages: 50,
@@ -101,16 +111,22 @@ const wrapEmailHtml = ({ title, bodyHtml, footerNote }) => `
 
 const sendEmail = async ({ to, subject, text, html }) => {
   const transporter = createTransport();
-  const info = await transporter.sendMail({
-    from: getFromAddress(),
-    to,
-    replyTo: getReplyTo(),
-    subject,
-    text,
-    html,
-    headers: buildEmailHeaders(),
-  });
-  return info;
+  try {
+    const info = await transporter.sendMail({
+      from: getFromAddress(),
+      to,
+      replyTo: getReplyTo(),
+      subject,
+      text,
+      html,
+      headers: buildEmailHeaders(),
+    });
+    return info;
+  } catch (err) {
+    const { host, port, user } = getSmtpConfig();
+    console.error(`Email send failed [${host}:${port} user=${user}]:`, err.message);
+    throw err;
+  }
 };
 
 const sendOTPEmail = async (email, otp, type = 'verify') => {
