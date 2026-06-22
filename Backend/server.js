@@ -14,6 +14,13 @@ const startServer = async () => {
     console.log(`🧹 Startup cleanup: removed ${removed} stale unverified registration(s)`);
   }
 
+  if (process.env.SMTP_HOST) {
+    const from = process.env.SMTP_USER_EMAIL
+      ? `${process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform'} <${process.env.SMTP_USER_EMAIL}>`
+      : '(not set — set SMTP_USER_EMAIL)';
+    console.log(`📧 Email: ${process.env.SMTP_HOST} | From: ${from}`);
+  }
+
   const server = app.listen(PORT, () => {
     console.log('');
     console.log('╔══════════════════════════════════════════════════╗');

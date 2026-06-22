@@ -6,15 +6,20 @@ const getSmtpConfig = () => ({
   port: parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT, 10) || 587,
   user: process.env.SMTP_USER || process.env.EMAIL_USER,
   pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
-  fromEmail: process.env.SMTP_USER_EMAIL || process.env.EMAIL_USER,
+  fromEmail: process.env.SMTP_USER_EMAIL || process.env.EMAIL_FROM?.match(/<([^>]+)>/)?.[1] || process.env.EMAIL_USER,
   fromName: process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform',
-  replyTo: process.env.EMAIL_REPLY_TO || process.env.SMTP_USER_EMAIL || process.env.EMAIL_USER,
+  replyTo: process.env.EMAIL_REPLY_TO || process.env.SMTP_USER_EMAIL || process.env.EMAIL_FROM?.match(/<([^>]+)>/)?.[1],
 });
 
 const getFromAddress = () => {
   const { fromEmail, fromName } = getSmtpConfig();
-  const explicitFrom = process.env.EMAIL_FROM;
 
+  // SMTP2GO requires From to be a verified sender — never use legacy Gmail EMAIL_FROM
+  if (process.env.SMTP_USER_EMAIL) {
+    return `${fromName} <${process.env.SMTP_USER_EMAIL}>`;
+  }
+
+  const explicitFrom = process.env.EMAIL_FROM;
   if (explicitFrom) return explicitFrom;
   if (!fromEmail) return fromName;
   if (fromEmail.includes('<')) return fromEmail;
