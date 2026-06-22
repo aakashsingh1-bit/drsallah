@@ -9,13 +9,13 @@ const getSmtpConfig = () => {
   const user = rawUser?.includes('@') ? rawUser : (fromEmail || rawUser);
 
   return {
-    host: process.env.SMTP_HOST || process.env.EMAIL_HOST,
+    host: (process.env.SMTP_HOST || process.env.EMAIL_HOST || '').trim(),
     port: parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT, 10) || 587,
-    user,
-    pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
-    fromEmail: fromEmail || rawUser,
+    user: user?.trim(),
+    pass: (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').trim(),
+    fromEmail: (fromEmail || rawUser || '').trim(),
     fromName: process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform',
-    replyTo: process.env.EMAIL_REPLY_TO || fromEmail || rawUser,
+    replyTo: (process.env.EMAIL_REPLY_TO || fromEmail || rawUser || '').trim(),
   };
 };
 
@@ -124,7 +124,10 @@ const sendEmail = async ({ to, subject, text, html }) => {
     return info;
   } catch (err) {
     const { host, port, user } = getSmtpConfig();
-    console.error(`Email send failed [${host}:${port} user=${user}]:`, err.message);
+    const hint = err.message?.includes('535') || err.message?.includes('authentication')
+      ? ' — check SMTP_USER is the full email and SMTP_PASS matches the cPanel mailbox password (use quotes if password has @ or #)'
+      : '';
+    console.error(`Email send failed [${host}:${port} user=${user}]:`, err.message + hint);
     throw err;
   }
 };
