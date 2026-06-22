@@ -1,35 +1,48 @@
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
+const getSmtpConfig = () => ({
+  host: process.env.SMTP_HOST || process.env.EMAIL_HOST,
+  port: parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT, 10) || 587,
+  user: process.env.SMTP_USER || process.env.EMAIL_USER,
+  pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
+  fromEmail: process.env.SMTP_USER_EMAIL || process.env.EMAIL_USER,
+  fromName: process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform',
+  replyTo: process.env.EMAIL_REPLY_TO || process.env.SMTP_USER_EMAIL || process.env.EMAIL_USER,
+});
+
 const getFromAddress = () => {
-  const from = process.env.EMAIL_FROM || process.env.EMAIL_USER;
-  const user = process.env.EMAIL_USER;
-  // Gmail SMTP requires From to match the authenticated account (or an alias).
-  if (user && from && !from.includes(user)) {
-    const name = (from.match(/^(.+)</) || [])[1]?.trim() || 'Dr. Sallah Platform';
-    return `${name} <${user}>`;
-  }
-  return from;
+  const { fromEmail, fromName } = getSmtpConfig();
+  const explicitFrom = process.env.EMAIL_FROM;
+
+  if (explicitFrom) return explicitFrom;
+  if (!fromEmail) return fromName;
+  if (fromEmail.includes('<')) return fromEmail;
+
+  return `${fromName} <${fromEmail}>`;
 };
 
-const getReplyTo = () => process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER;
+const getReplyTo = () => getSmtpConfig().replyTo;
 
 const getMessageDomain = () => {
-  const email = process.env.EMAIL_USER || 'drsallah.com';
-  return email.includes('@') ? email.split('@')[1] : 'drsallah.com';
+  const { fromEmail } = getSmtpConfig();
+  const email = fromEmail || 'drsallah.com';
+  return email.includes('@') ? email.split('@')[1] : email;
 };
 
 const createTransport = () => {
-  const port = parseInt(process.env.EMAIL_PORT, 10) || 587;
+  const { host, port, user, pass } = getSmtpConfig();
+
+  if (!host || !user || !pass) {
+    throw new Error('SMTP is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS in .env');
+  }
+
   return nodemailer.createTransport({
-    host: process.env.EMAIL_HOST,
+    host,
     port,
     secure: port === 465,
     requireTLS: port === 587,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
+    auth: { user, pass },
     tls: {
       minVersion: 'TLSv1.2',
       rejectUnauthorized: true,
