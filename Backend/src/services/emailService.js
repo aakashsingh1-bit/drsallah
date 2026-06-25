@@ -2,20 +2,18 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
 const getSmtpConfig = () => {
-  const rawUser = process.env.SMTP_USER || process.env.EMAIL_USER;
+  const authUser = process.env.SMTP_USER || process.env.EMAIL_USER;
   const fromEmail = process.env.SMTP_USER_EMAIL;
-
-  // cPanel / hosting SMTP requires the full email address as username (not a short name like "Drsalah")
-  const user = rawUser?.includes('@') ? rawUser : (fromEmail || rawUser);
 
   return {
     host: process.env.SMTP_HOST || process.env.EMAIL_HOST,
     port: parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT, 10) || 587,
-    user,
+    // SMTP login — SMTP2GO uses account username (e.g. sisgain); cPanel uses full email
+    user: authUser,
     pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
-    fromEmail: fromEmail || rawUser,
+    fromEmail: fromEmail || authUser,
     fromName: process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform',
-    replyTo: process.env.EMAIL_REPLY_TO || fromEmail || rawUser,
+    replyTo: process.env.EMAIL_REPLY_TO || fromEmail || authUser,
   };
 };
 
