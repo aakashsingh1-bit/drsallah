@@ -10,6 +10,13 @@ const {
   recalculateAllCourses,
   countModuleLessons,
 } = require('../services/courseStatsService');
+const {
+  capProgressSeconds,
+  buildLessonProgress,
+  buildWatchHistoryMap,
+  computeCourseProgress,
+  attachLessonWatchProgress,
+} = require('../services/watchProgressService');
 
 // ─── Helper: safe S3 signed URL ───────────────────────────────────────────────
 const safeSignedUrl = async (key, expiry = 3600) => {
@@ -242,18 +249,7 @@ exports.getMyLearning = async (req, res) => {
         }).select('_id duration')
       : [];
 
-    const lessonIdSet = new Set(publishedLessons.map((l) => l._id.toString()));
-    const watchedInCourse = watchHistory.filter((h) => lessonIdSet.has(h.lesson.toString()));
-    const watchedLessonIds = new Set(watchedInCourse.map((h) => h.lesson.toString()));
-    const totalLessons = publishedLessons.length;
-    const watchedLessons = watchedLessonIds.size;
-    const percentComplete = totalLessons > 0 ? Math.round((watchedLessons / totalLessons) * 100) : 0;
-
-    const lastWatched = watchedInCourse.length
-      ? watchedInCourse.reduce((latest, entry) =>
-          new Date(entry.watchedAt) > new Date(latest.watchedAt) ? entry : latest
-        )
-      : null;
+    const courseProgress = computeCourseProgress(watchHistory, publishedLessons);
 
     const daysRemaining = Math.max(
       0,
@@ -271,11 +267,13 @@ exports.getMyLearning = async (req, res) => {
       },
       course: courseObj,
       progress: {
-        watchedLessons,
-        totalLessons,
-        percentComplete,
-        lastWatchedAt: lastWatched?.watchedAt || null,
-        lastLessonId: lastWatched?.lesson || null,
+        watchedLessons: courseProgress.watchedLessons,
+        totalLessons: courseProgress.totalLessons,
+        percentComplete: courseProgress.percentComplete,
+        watchedDuration: courseProgress.watchedDuration,
+        totalDuration: courseProgress.totalDuration,
+        lastWatchedAt: courseProgress.lastWatchedAt,
+        lastLessonId: courseProgress.lastLessonId,
       },
     });
   }
@@ -352,6 +350,12 @@ exports.getCourseFullContent = async (req, res) => {
   if (!isAdmin) moduleFilter.isPublished = true;
   const modules = await Module.find(moduleFilter).sort({ order: 1 });
 
+  let watchMap = new Map();
+  if (req.user && !isAdmin) {
+    const whUser = await User.findById(req.user._id).select('watchHistory');
+    watchMap = buildWatchHistoryMap(whUser?.watchHistory || []);
+  }
+
   // Get lessons for every module in parallel
   const modulesWithLessons = await Promise.all(
     modules.map(async (mod) => {
@@ -369,6 +373,9 @@ exports.getCourseFullContent = async (req, res) => {
         lessonObj.isFinalLesson = Boolean(isFinalLesson);
         lessonObj.requiresReview = Boolean(isFinalLesson && !review);
         lessonObj.isLocked = Boolean(isFinalLesson && !review);
+        if (!isAdmin) {
+          attachLessonWatchProgress(lessonObj, watchMap.get(lessonObj._id.toString()));
+        }
         return lessonObj;
       });
       modObj.totalLessons = lessons.length;
@@ -382,6 +389,20 @@ exports.getCourseFullContent = async (req, res) => {
   if (!isAdmin) {
     courseObj.totalLessons = course.totalLessons;
     courseObj.totalDuration = course.totalDuration;
+    const allLessonIds = modulesWithLessons.flatMap((m) => (m.lessons || []).map((l) => l._id));
+    const publishedForProgress = allLessonIds.length
+      ? await Lesson.find({ _id: { $in: allLessonIds } }).select('_id duration')
+      : [];
+    const courseProgress = computeCourseProgress(
+      watchMap.size ? [...watchMap.values()] : [],
+      publishedForProgress
+    );
+    courseObj.courseProgress = {
+      percentComplete: courseProgress.percentComplete,
+      watchedLessons: courseProgress.watchedLessons,
+      totalLessons: courseProgress.totalLessons,
+      lastLessonId: courseProgress.lastLessonId,
+    };
   } else {
     courseObj.publishedLessons = course.totalLessons;
     courseObj.publishedDuration = course.totalDuration;
@@ -1354,17 +1375,34 @@ exports.updateWatchHistory = async (req, res) => {
     return res.status(400).json({ success: false, message: 'lessonId and progress are required' });
   }
 
+  const lesson = await Lesson.findById(lessonId).select('duration course');
+  if (!lesson) {
+    return res.status(404).json({ success: false, message: 'Lesson not found' });
+  }
+
+  const cappedProgress = capProgressSeconds(progress, lesson.duration);
+
   const user = await User.findById(req.user._id);
   const idx = user.watchHistory.findIndex((h) => h.lesson.toString() === lessonId);
 
   if (idx >= 0) {
-    user.watchHistory[idx].progress = progress;
+    user.watchHistory[idx].progress = cappedProgress;
     user.watchHistory[idx].watchedAt = new Date();
   } else {
-    user.watchHistory.push({ lesson: lessonId, progress });
+    user.watchHistory.push({ lesson: lessonId, progress: cappedProgress });
   }
   await user.save();
-  res.json({ success: true, message: 'Watch history updated' });
+
+  const watchProgress = buildLessonProgress(cappedProgress, lesson.duration);
+  res.json({
+    success: true,
+    message: 'Watch history updated',
+    data: {
+      lessonId,
+      ...watchProgress,
+      watchedAt: new Date(),
+    },
+  });
 };
 
 // GET /watch-history
@@ -1375,7 +1413,19 @@ exports.getWatchHistory = async (req, res) => {
       select: 'title duration course module order isFree uploadStatus',
     })
     .select('watchHistory');
-  res.json({ success: true, data: user.watchHistory });
+
+  const sorted = [...(user?.watchHistory || [])].sort(
+    (a, b) => new Date(b.watchedAt).getTime() - new Date(a.watchedAt).getTime()
+  );
+
+  const data = sorted.map((entry) => {
+    const obj = entry.toObject ? entry.toObject() : { ...entry };
+    const duration = obj.lesson?.duration || 0;
+    obj.watchProgress = buildLessonProgress(obj.progress, duration);
+    return obj;
+  });
+
+  res.json({ success: true, data });
 };
 
 // GET /bookmarks

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const { watchHistoryLimiter } = require('../middleware/rateLimiters');
 const {
   // Courses
   getAllCourses,
@@ -877,7 +878,7 @@ router.post('/security/event', protect, reportSecurityEvent);
  */
 router.route('/watch-history')
   .get(protect, getWatchHistory)
-  .post(protect, updateWatchHistory);
+  .post(protect, watchHistoryLimiter, updateWatchHistory);
 
 /**
  * @openapi
