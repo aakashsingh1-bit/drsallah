@@ -3,7 +3,7 @@ const User = require('../models/User');
 const { CoursePurchase, CourseReview } = require('../models/CourseAccess');
 const SecurityLog = require('../models/SecurityLog');
 const s3Service = require('../services/s3Service');
-const { analyzeUserBehavior, detectAbnormalPlayback } = require('../services/antiPiracyService');
+const { detectAbnormalPlayback } = require('../services/antiPiracyService');
 const {
   recalculateCourseStats,
   recalculateAfterLessonChange,
@@ -1288,12 +1288,11 @@ exports.getStreamUrl = async (req, res) => {
     }
   }
 
-  // Anti-piracy
+  // Anti-piracy logging only — no auto-suspend on web playback
   const { isSuspicious, uniqueIPs } = await detectAbnormalPlayback(userId, ip);
   if (isSuspicious) {
-    await analyzeUserBehavior(userId, 'suspicious_activity', { uniqueIPs, ip });
     await SecurityLog.create({
-      user: userId, event: 'suspicious_activity', ip, severity: 'critical',
+      user: userId, event: 'suspicious_activity', ip, severity: 'warning',
       details: { lessonId: lesson._id, uniqueIPsLastHour: uniqueIPs },
     });
   }
@@ -1352,15 +1351,14 @@ exports.reportSecurityEvent = async (req, res) => {
   await SecurityLog.create({
     user: userId, event, ip: req.ip,
     deviceId: req.headers['x-device-id'],
-    severity: 'critical',
+    severity: 'warning',
     details: { lessonId, reportedByDevice: true },
   });
 
-  const result = await analyzeUserBehavior(userId, event);
   res.json({
     success: true,
     message: 'Security event recorded',
-    action: result?.suspended ? 'session_terminated' : 'flagged',
+    action: 'logged',
   });
 };
 

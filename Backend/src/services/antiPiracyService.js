@@ -46,18 +46,14 @@ const analyzeUserBehavior = async (userId, event, context = {}) => {
 
   const newScore = Math.min(100, (user.riskScore || 0) + riskDelta);
   const shouldFlag = newScore >= 60;
-  const shouldSuspend = newScore >= 85;
 
   await User.findByIdAndUpdate(userId, {
     riskScore: newScore,
     isFlagged: shouldFlag,
     ...(shouldFlag && !user.isFlagged ? { flagReason: `High risk score: ${newScore}` } : {}),
-    ...(shouldSuspend && !user.isSuspended
-      ? { isSuspended: true, suspensionReason: 'Automated: risk score exceeded threshold' }
-      : {}),
   });
 
-  return { riskScore: newScore, flagged: shouldFlag, suspended: shouldSuspend };
+  return { riskScore: newScore, flagged: shouldFlag, suspended: false };
 };
 
 /**

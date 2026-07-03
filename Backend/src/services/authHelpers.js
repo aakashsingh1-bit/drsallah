@@ -1,6 +1,5 @@
 const SecurityLog = require('../models/SecurityLog');
 const { generateAccessToken, generateRefreshToken } = require('./tokenService');
-const { sendSecurityAlertEmail } = require('./emailService');
 
 const formatUserResponse = (user) => ({
   _id: user._id,
@@ -27,32 +26,6 @@ const assertAccountCanAuthenticate = (user) => {
 
 const completeLogin = async (user, req, { deviceId, deviceName } = {}) => {
   const ip = req.ip;
-
-  if (user.deviceId && deviceId && user.deviceId !== deviceId) {
-    await SecurityLog.create({
-      user: user._id,
-      event: 'multi_device_login',
-      ip,
-      deviceId,
-      severity: 'critical',
-      details: { boundDevice: user.deviceId, attemptedDevice: deviceId },
-    });
-    await sendSecurityAlertEmail(user.email, {
-      message: 'A login attempt was made from a new device. Your account is bound to another device.',
-      ip,
-    });
-    return {
-      ok: false,
-      status: 403,
-      message: 'Account is bound to another device. Contact support to reset device.',
-    };
-  }
-
-  if (!user.deviceId && deviceId) {
-    user.deviceId = deviceId;
-    user.deviceName = deviceName || 'Unknown Device';
-    user.deviceBoundAt = new Date();
-  }
 
   const accessToken = generateAccessToken(user._id, user.role);
   const refreshToken = generateRefreshToken(user._id);
