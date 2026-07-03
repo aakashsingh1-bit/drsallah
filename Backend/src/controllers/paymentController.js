@@ -191,6 +191,7 @@ exports.createCoursePaymentIntent = async (req, res) => {
   const paymentIntent = await stripe.paymentIntents.create({
     amount,
     currency,
+    automatic_payment_methods: { enabled: true },
     receipt_email: req.user.email,
     metadata: {
       purchaseId: purchase._id.toString(),
