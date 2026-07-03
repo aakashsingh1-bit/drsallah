@@ -3,6 +3,7 @@ const app = require('./src/app');
 const connectDB = require('./src/config/db');
 const startSubscriptionJobs = require('./src/services/scheduledJobs');
 const { deleteUnverifiedUsers } = require('./src/services/unverifiedUserService');
+const { recalculateAllCourses } = require('./src/services/courseStatsService');
 
 const PORT = process.env.PORT || 5000;
 
@@ -13,6 +14,9 @@ const startServer = async () => {
   if (removed > 0) {
     console.log(`🧹 Startup cleanup: removed ${removed} stale unverified registration(s)`);
   }
+
+  const coursesRecalculated = await recalculateAllCourses();
+  console.log(`📊 Recalculated stats for ${coursesRecalculated} course(s)`);
 
   if (process.env.SMTP_HOST) {
     const from = process.env.SMTP_USER_EMAIL

@@ -4,6 +4,12 @@ const { CoursePurchase, CourseReview } = require('../models/CourseAccess');
 const SecurityLog = require('../models/SecurityLog');
 const s3Service = require('../services/s3Service');
 const { analyzeUserBehavior, detectAbnormalPlayback } = require('../services/antiPiracyService');
+const {
+  recalculateCourseStats,
+  recalculateAfterLessonChange,
+  recalculateAllCourses,
+  countModuleLessons,
+} = require('../services/courseStatsService');
 
 // ─── Helper: safe S3 signed URL ───────────────────────────────────────────────
 const safeSignedUrl = async (key, expiry = 3600) => {
@@ -170,6 +176,14 @@ exports.getAllCourses = async (req, res) => {
       if (obj.thumbnailKey) {
         obj.thumbnail = await safeSignedUrl(obj.thumbnailKey, EXPIRY()) || obj.thumbnail;
       }
+      if (!isAdmin) {
+        obj.totalLessons = c.totalLessons;
+        obj.totalDuration = c.totalDuration;
+      } else {
+        obj.publishedLessons = c.totalLessons;
+        obj.publishedDuration = c.totalDuration;
+        obj.totalLessonsAll = await Lesson.countDocuments({ course: c._id });
+      }
       await attachCourseAccess(obj, req.user);
       await attachCourseRating(obj);
       return obj;
@@ -215,10 +229,18 @@ exports.getMyLearning = async (req, res) => {
 
     await attachCourseRating(courseObj);
 
-    const publishedLessons = await Lesson.find({
+    const publishedModuleIds = await Module.find({
       course: courseObj._id,
       isPublished: true,
-    }).select('_id duration');
+    }).distinct('_id');
+
+    const publishedLessons = publishedModuleIds.length
+      ? await Lesson.find({
+          course: courseObj._id,
+          module: { $in: publishedModuleIds },
+          isPublished: true,
+        }).select('_id duration')
+      : [];
 
     const lessonIdSet = new Set(publishedLessons.map((l) => l._id.toString()));
     const watchedInCourse = watchHistory.filter((h) => lessonIdSet.has(h.lesson.toString()));
@@ -275,13 +297,23 @@ exports.getCourseById = async (req, res) => {
   const modulesWithCounts = await Promise.all(
     modules.map(async (mod) => {
       const modObj = mod.toObject();
-      const lessonCount = await Lesson.countDocuments({ module: mod._id });
-      modObj.totalLessons = lessonCount;
+      modObj.totalLessons = await countModuleLessons(mod._id, { includeUnpublished: isAdmin });
+      if (isAdmin) {
+        modObj.publishedLessons = await countModuleLessons(mod._id, { includeUnpublished: false });
+      }
       return modObj;
     })
   );
 
   const courseObj = course.toObject();
+  if (!isAdmin) {
+    courseObj.totalLessons = course.totalLessons;
+    courseObj.totalDuration = course.totalDuration;
+  } else {
+    courseObj.publishedLessons = course.totalLessons;
+    courseObj.publishedDuration = course.totalDuration;
+    courseObj.totalLessonsAll = await Lesson.countDocuments({ course: course._id });
+  }
   if (courseObj.thumbnailKey) {
     courseObj.thumbnail = await safeSignedUrl(courseObj.thumbnailKey, EXPIRY()) || courseObj.thumbnail;
   }
@@ -340,9 +372,21 @@ exports.getCourseFullContent = async (req, res) => {
         return lessonObj;
       });
       modObj.totalLessons = lessons.length;
+      if (isAdmin) {
+        modObj.publishedLessons = await countModuleLessons(mod._id, { includeUnpublished: false });
+      }
       return modObj;
     })
   );
+
+  if (!isAdmin) {
+    courseObj.totalLessons = course.totalLessons;
+    courseObj.totalDuration = course.totalDuration;
+  } else {
+    courseObj.publishedLessons = course.totalLessons;
+    courseObj.publishedDuration = course.totalDuration;
+    courseObj.totalLessonsAll = await Lesson.countDocuments({ course: course._id });
+  }
 
   res.json({
     success: true,
@@ -392,7 +436,13 @@ exports.updateCourse = async (req, res) => {
 
   const course = await Course.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true });
   if (!course) return res.status(404).json({ success: false, message: 'Course not found' });
-  res.json({ success: true, data: course });
+  const data = course.toObject();
+  if (req.user?.role === 'admin') {
+    data.publishedLessons = course.totalLessons;
+    data.publishedDuration = course.totalDuration;
+    data.totalLessonsAll = await Lesson.countDocuments({ course: course._id });
+  }
+  res.json({ success: true, data });
 };
 
 // DELETE /courses/:id
@@ -458,8 +508,10 @@ exports.getModulesByCourse = async (req, res) => {
   const modulesWithCounts = await Promise.all(
     modules.map(async (mod) => {
       const modObj = mod.toObject();
-      const lessonCount = await Lesson.countDocuments({ module: mod._id });
-      modObj.totalLessons = lessonCount;
+      modObj.totalLessons = await countModuleLessons(mod._id, { includeUnpublished: isAdmin });
+      if (isAdmin) {
+        modObj.publishedLessons = await countModuleLessons(mod._id, { includeUnpublished: false });
+      }
       return modObj;
     })
   );
@@ -483,6 +535,9 @@ exports.getModuleWithLessons = async (req, res) => {
   const moduleObj = module.toObject();
   moduleObj.lessons = lessons.map((l) => l.toObject());
   moduleObj.totalLessons = lessons.length;
+  if (isAdmin) {
+    moduleObj.publishedLessons = await countModuleLessons(module._id, { includeUnpublished: false });
+  }
 
   res.json({ success: true, data: moduleObj });
 };
@@ -504,6 +559,7 @@ exports.createModule = async (req, res) => {
     scheduledAt,
     course: req.params.courseId,
   });
+  await recalculateCourseStats(req.params.courseId);
   res.status(201).json({ success: true, data: module });
 };
 
@@ -511,19 +567,24 @@ exports.createModule = async (req, res) => {
 exports.updateModule = async (req, res) => {
   const module = await Module.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
   if (!module) return res.status(404).json({ success: false, message: 'Module not found' });
+  await recalculateCourseStats(module.course);
   res.json({ success: true, data: module });
 };
 
 // DELETE /modules/:id
 exports.deleteModule = async (req, res) => {
+  const module = await Module.findById(req.params.id);
+  if (!module) return res.status(404).json({ success: false, message: 'Module not found' });
+
   const lessons = await Lesson.find({ module: req.params.id });
   await Promise.all(
     lessons
       .filter((l) => l.videoKey)
       .map((l) => s3Service.deleteFromS3(l.videoKey).catch(() => {}))
   );
-  await Module.findByIdAndDelete(req.params.id);
   await Lesson.deleteMany({ module: req.params.id });
+  await Module.findByIdAndDelete(req.params.id);
+  await recalculateCourseStats(module.course);
   res.json({ success: true, message: 'Module and all lessons deleted' });
 };
 
@@ -627,13 +688,7 @@ exports.createLesson = async (req, res) => {
     course: module.course,
   });
 
-  // Update counters
-  await Promise.all([
-    Course.findByIdAndUpdate(module.course, {
-      $inc: { totalLessons: 1, totalDuration: Number(req.body.duration) || 0 },
-    }),
-    Module.findByIdAndUpdate(module._id, { $inc: { totalLessons: 1 } }),
-  ]);
+  await recalculateAfterLessonChange(lesson);
 
   res.status(201).json({ success: true, data: lesson });
 };
@@ -642,23 +697,20 @@ exports.createLesson = async (req, res) => {
 exports.updateLesson = async (req, res) => {
   const lesson = await Lesson.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
   if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+  await recalculateAfterLessonChange(lesson);
   res.json({ success: true, data: lesson });
 };
 
 // DELETE /lessons/:id
 exports.deleteLesson = async (req, res) => {
-  const lesson = await Lesson.findByIdAndDelete(req.params.id);
-  if (lesson) {
-    if (lesson.videoKey) {
-      try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
-    }
-    await Promise.all([
-      Course.findByIdAndUpdate(lesson.course, {
-        $inc: { totalLessons: -1, totalDuration: -(lesson.duration || 0) },
-      }),
-      Module.findByIdAndUpdate(lesson.module, { $inc: { totalLessons: -1 } }),
-    ]);
+  const lesson = await Lesson.findById(req.params.id);
+  if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
+
+  if (lesson.videoKey) {
+    try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
   }
+  await Lesson.findByIdAndDelete(req.params.id);
+  await recalculateAfterLessonChange(lesson);
   res.json({ success: true, message: 'Lesson deleted' });
 };
 
@@ -720,11 +772,7 @@ exports.confirmVideoUpload = async (req, res) => {
   existing.duration = newDuration;
   await existing.save();
 
-  // Adjust course totalDuration: subtract old, add new
-  const durationDiff = newDuration - oldDuration;
-  if (durationDiff !== 0) {
-    await Course.findByIdAndUpdate(existing.course, { $inc: { totalDuration: durationDiff } });
-  }
+  await recalculateAfterLessonChange(existing);
 
   res.json({ success: true, message: 'Video confirmed. Lesson is ready for streaming.', data: existing });
 };
@@ -758,11 +806,7 @@ exports.uploadVideoDirectly = async (req, res) => {
   lesson.duration = newDuration;
   await lesson.save();
 
-  // Adjust course totalDuration
-  const durationDiff = newDuration - oldDuration;
-  if (durationDiff !== 0) {
-    await Course.findByIdAndUpdate(lesson.course, { $inc: { totalDuration: durationDiff } });
-  }
+  await recalculateAfterLessonChange(lesson);
 
   res.json({ success: true, message: 'Video uploaded to S3 successfully', data: { lessonId, key, lesson } });
 };
@@ -833,11 +877,7 @@ exports.completeDirectMultipartUpload = async (req, res) => {
     lesson.duration = newDuration;
     await lesson.save();
 
-    // Adjust course totalDuration
-    const durationDiff = newDuration - oldDuration;
-    if (durationDiff !== 0) {
-      await Course.findByIdAndUpdate(lesson.course, { $inc: { totalDuration: durationDiff } });
-    }
+    await recalculateAfterLessonChange(lesson);
 
     res.json({ success: true, message: 'Video uploaded to S3 successfully', data: { lessonId, key, lesson } });
   } catch (err) {
@@ -1143,6 +1183,7 @@ exports.importVideoFromUrl = async (req, res) => {
             lesson.videoSize = totalBytes;
             lesson.duration = newDuration;
             await lesson.save();
+            await recalculateAfterLessonChange(lesson);
 
             if (job) {
               job.status = 'completed';
