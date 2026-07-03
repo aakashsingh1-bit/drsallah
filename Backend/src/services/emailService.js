@@ -131,9 +131,15 @@ const sendOTPEmail = async (email, otp, type = 'verify') => {
   const subjects = {
     verify: 'Your Dr. Sallah verification code',
     password_reset: 'Your Dr. Sallah password reset code',
+    login: 'Your Dr. Sallah login code',
   };
   const subject = subjects[type] || subjects.verify;
-  const purpose = type === 'password_reset' ? 'reset your password' : 'verify your email address';
+  const purpose =
+    type === 'password_reset'
+      ? 'reset your password'
+      : type === 'login'
+        ? 'sign in to your account'
+        : 'verify your email address';
 
   const text = [
     'Dr. Sallah Education Platform',

@@ -2,9 +2,29 @@ const User = require('../models/User');
 const SecurityLog = require('../models/SecurityLog');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../services/tokenService');
 const { generateOTP, getOTPExpiry } = require('../services/otpService');
-const { sendOTPEmail, sendSecurityAlertEmail } = require('../services/emailService');
+const { sendOTPEmail } = require('../services/emailService');
 const { deleteUserAccount } = require('../services/accountDeletionService');
 const { isUnverifiedUserStale } = require('../services/unverifiedUserService');
+const { formatUserResponse, assertAccountCanAuthenticate, completeLogin } = require('../services/authHelpers');
+
+const OTP_EXPIRY_MINUTES = parseInt(process.env.OTP_EXPIRES_IN, 10) || 5;
+
+const sendOtpToUser = async (user, type, emailType) => {
+  const otp = generateOTP();
+  user.otp = otp;
+  user.otpExpires = getOTPExpiry(OTP_EXPIRY_MINUTES);
+  user.otpType = type;
+  await user.save();
+
+  try {
+    await sendOTPEmail(user.email, otp, emailType);
+  } catch (e) {
+    console.error('Email send failed:', e.message);
+    throw e;
+  }
+
+  return user;
+};
 
 // ─── Register ──────────────────────────────────────────────────────────────────
 exports.register = async (req, res) => {
@@ -36,6 +56,8 @@ exports.register = async (req, res) => {
         success: true,
         message: 'A verification code was sent to your email. Please verify to complete registration.',
         userId: exists._id,
+        registeredAt: exists.createdAt,
+        otpExpiresAt: exists.otpExpires,
       });
     }
 
@@ -63,25 +85,50 @@ exports.register = async (req, res) => {
     success: true,
     message: 'Registration successful. Please verify your email with the OTP sent.',
     userId: user._id,
+    registeredAt: user.createdAt,
+    otpExpiresAt: user.otpExpires,
   });
 };
 
 // ─── Verify OTP ────────────────────────────────────────────────────────────────
 exports.verifyOTP = async (req, res) => {
-  const { userId, otp } = req.body;
-  const user = await User.findById(userId).select('+otp +otpExpires');
+  const { userId, otp, deviceId, deviceName } = req.body;
+  const user = await User.findById(userId).select('+otp +otpExpires +refreshTokens');
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
   if (user.otp !== otp || user.otpExpires < new Date()) {
     return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
   }
 
+  if (user.otpType && user.otpType !== 'email_verify') {
+    return res.status(400).json({ success: false, message: 'Invalid OTP type for email verification' });
+  }
+
   user.isVerified = true;
   user.otp = undefined;
   user.otpExpires = undefined;
+  user.otpType = undefined;
   await user.save();
 
-  res.json({ success: true, message: 'Email verified successfully' });
+  await SecurityLog.create({ user: user._id, event: 'otp_verified', ip: req.ip, details: { type: 'email_verify' } });
+
+  const response = {
+    success: true,
+    message: 'Email verified successfully',
+    user: formatUserResponse(user),
+  };
+
+  if (deviceId) {
+    const login = await completeLogin(user, req, { deviceId, deviceName });
+    if (login.ok) {
+      response.accessToken = login.accessToken;
+      response.refreshToken = login.refreshToken;
+      response.user = login.user;
+      response.message = 'Email verified and logged in successfully';
+    }
+  }
+
+  res.json(response);
 };
 
 // ─── Login ─────────────────────────────────────────────────────────────────────
@@ -95,69 +142,18 @@ exports.login = async (req, res) => {
     return res.status(401).json({ success: false, message: 'Invalid credentials' });
   }
 
-  if (user.deletedAt) {
-    return res.status(403).json({ success: false, message: 'This account has been deleted' });
-  }
+  const check = assertAccountCanAuthenticate(user);
+  if (!check.ok) return res.status(check.status).json({ success: false, message: check.message });
 
-  if (!user.isVerified) {
-    return res.status(403).json({ success: false, message: 'Please verify your email first' });
-  }
-
-  if (user.isSuspended) {
-    return res.status(403).json({ success: false, message: `Account suspended: ${user.suspensionReason}` });
-  }
-
-  // Device binding logic
-  if (user.deviceId && deviceId && user.deviceId !== deviceId) {
-    await SecurityLog.create({
-      user: user._id, event: 'multi_device_login', ip, deviceId,
-      severity: 'critical',
-      details: { boundDevice: user.deviceId, attemptedDevice: deviceId },
-    });
-    await sendSecurityAlertEmail(user.email, {
-      message: 'A login attempt was made from a new device. Your account is bound to another device.',
-      ip,
-    });
-    return res.status(403).json({
-      success: false,
-      message: 'Account is bound to another device. Contact support to reset device.',
-    });
-  }
-
-  // Bind device if not yet bound
-  if (!user.deviceId && deviceId) {
-    user.deviceId = deviceId;
-    user.deviceName = deviceName || 'Unknown Device';
-    user.deviceBoundAt = new Date();
-  }
-
-  const accessToken = generateAccessToken(user._id, user.role);
-  const refreshToken = generateRefreshToken(user._id);
-
-  // Store refresh token (max 5 per user)
-  user.refreshTokens = [...(user.refreshTokens || []).slice(-4), refreshToken];
-  user.lastLogin = new Date();
-  user.lastLoginIp = ip;
-  await user.save();
-
-  await SecurityLog.create({
-    user: user._id, event: 'login_success', ip,
-    deviceId, deviceName, userAgent: req.headers['user-agent'],
-  });
+  const login = await completeLogin(user, req, { deviceId, deviceName });
+  if (!login.ok) return res.status(login.status).json({ success: false, message: login.message });
 
   res.json({
     success: true,
     message: 'Login successful',
-    accessToken,
-    refreshToken,
-    user: {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      deviceId: user.deviceId,
-      isVerified: user.isVerified,
-    },
+    accessToken: login.accessToken,
+    refreshToken: login.refreshToken,
+    user: login.user,
   });
 };
 
@@ -250,6 +246,213 @@ exports.resetPassword = async (req, res) => {
 exports.getMe = async (req, res) => {
   const user = await User.findById(req.user._id).populate('activeSubscription');
   res.json({ success: true, user });
+};
+
+// ─── Update Profile ────────────────────────────────────────────────────────────
+exports.updateProfile = async (req, res) => {
+  const { name, phone, currentPassword, newPassword } = req.body;
+  const user = await User.findById(req.user._id).select('+password');
+
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+  if (name !== undefined) user.name = name.trim();
+  if (phone !== undefined) user.phone = phone?.trim() || undefined;
+
+  if (newPassword) {
+    if (!currentPassword) {
+      return res.status(400).json({ success: false, message: 'Current password is required to set a new password' });
+    }
+    if (!(await user.comparePassword(currentPassword))) {
+      return res.status(401).json({ success: false, message: 'Current password is incorrect' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+    }
+    user.password = newPassword;
+    user.refreshTokens = [];
+  }
+
+  await user.save();
+
+  const updated = await User.findById(user._id).populate('activeSubscription');
+  res.json({ success: true, message: 'Profile updated successfully', user: updated });
+};
+
+// ─── Resend OTP (registration / verification) ───────────────────────────────────
+exports.resendOTP = async (req, res) => {
+  const { email, userId } = req.body;
+
+  if (!email && !userId) {
+    return res.status(400).json({ success: false, message: 'email or userId is required' });
+  }
+
+  const user = userId
+    ? await User.findById(userId)
+    : await User.findOne({ email: email.toLowerCase().trim() });
+
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'Registration not found for this email' });
+  }
+
+  if (user.isVerified) {
+    return res.status(400).json({ success: false, message: 'Email is already verified' });
+  }
+
+  if (isUnverifiedUserStale(user)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Registration expired. Please register again.',
+      expired: true,
+    });
+  }
+
+  await sendOtpToUser(user, 'email_verify', 'verify');
+
+  await SecurityLog.create({
+    user: user._id,
+    event: 'otp_sent',
+    ip: req.ip,
+    details: { type: 'email_verify', resend: true },
+  });
+
+  res.json({
+    success: true,
+    message: 'Verification code resent to your email',
+    userId: user._id,
+    registeredAt: user.createdAt,
+    otpExpiresAt: user.otpExpires,
+  });
+};
+
+// ─── Registration Status ───────────────────────────────────────────────────────
+exports.getRegistrationStatus = async (req, res) => {
+  const email = (req.body.email || req.query.email || '').toLowerCase().trim();
+  if (!email) {
+    return res.status(400).json({ success: false, message: 'email is required' });
+  }
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.json({
+      success: true,
+      data: {
+        exists: false,
+        isVerified: false,
+        canRegister: true,
+      },
+    });
+  }
+
+  if (user.isVerified) {
+    return res.json({
+      success: true,
+      data: {
+        exists: true,
+        isVerified: true,
+        canRegister: false,
+        registeredAt: user.createdAt,
+        lastLogin: user.lastLogin,
+        message: 'Account already verified. Please login.',
+      },
+    });
+  }
+
+  const expired = isUnverifiedUserStale(user);
+
+  res.json({
+    success: true,
+    data: {
+      exists: true,
+      isVerified: false,
+      userId: user._id,
+      registeredAt: user.createdAt,
+      otpExpiresAt: user.otpExpires,
+      expired,
+      canRegister: expired,
+      canResendOtp: !expired,
+      message: expired
+        ? 'Registration expired. You can register again with this email.'
+        : 'Verification pending. Check your email or resend OTP.',
+    },
+  });
+};
+
+// ─── Login with OTP — send ─────────────────────────────────────────────────────
+exports.sendLoginOTP = async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ success: false, message: 'email is required' });
+
+  const user = await User.findOne({ email: email.toLowerCase().trim() });
+  if (!user) {
+    return res.json({ success: true, message: 'If that email exists, a login code has been sent.' });
+  }
+
+  const check = assertAccountCanAuthenticate(user);
+  if (!check.ok) {
+    return res.status(check.status).json({ success: false, message: check.message });
+  }
+
+  await sendOtpToUser(user, 'login_otp', 'login');
+
+  await SecurityLog.create({
+    user: user._id,
+    event: 'otp_sent',
+    ip: req.ip,
+    details: { type: 'login_otp' },
+  });
+
+  res.json({
+    success: true,
+    message: 'Login code sent to your email',
+    userId: user._id,
+    otpExpiresAt: user.otpExpires,
+  });
+};
+
+// ─── Login with OTP — verify ───────────────────────────────────────────────────
+exports.verifyLoginOTP = async (req, res) => {
+  const { userId, email, otp, deviceId, deviceName } = req.body;
+
+  if (!otp || (!userId && !email)) {
+    return res.status(400).json({ success: false, message: 'otp and userId or email are required' });
+  }
+
+  const user = userId
+    ? await User.findById(userId).select('+otp +otpExpires +refreshTokens')
+    : await User.findOne({ email: email.toLowerCase().trim() }).select('+otp +otpExpires +refreshTokens');
+
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+  const check = assertAccountCanAuthenticate(user);
+  if (!check.ok) return res.status(check.status).json({ success: false, message: check.message });
+
+  if (user.otp !== otp || user.otpExpires < new Date() || user.otpType !== 'login_otp') {
+    return res.status(400).json({ success: false, message: 'Invalid or expired login code' });
+  }
+
+  user.otp = undefined;
+  user.otpExpires = undefined;
+  user.otpType = undefined;
+  await user.save();
+
+  await SecurityLog.create({
+    user: user._id,
+    event: 'otp_verified',
+    ip: req.ip,
+    details: { type: 'login_otp' },
+  });
+
+  const login = await completeLogin(user, req, { deviceId, deviceName });
+  if (!login.ok) return res.status(login.status).json({ success: false, message: login.message });
+
+  res.json({
+    success: true,
+    message: 'Login successful',
+    accessToken: login.accessToken,
+    refreshToken: login.refreshToken,
+    user: login.user,
+  });
 };
 
 // ─── Delete Account (Self-service) ─────────────────────────────────────────────

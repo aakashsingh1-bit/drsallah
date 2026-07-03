@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const {
   register, verifyOTP, login, refreshToken, logout,
-  forgotPassword, resetPassword, getMe, resetDevice, deleteAccount,
+  forgotPassword, resetPassword, getMe, updateProfile,
+  resendOTP, getRegistrationStatus, sendLoginOTP, verifyLoginOTP,
+  resetDevice, deleteAccount,
 } = require('../controllers/authController');
 const { protect, adminOnly } = require('../middleware/auth');
 
@@ -64,6 +66,112 @@ router.post('/register', register);
  *         description: Invalid or expired OTP
  */
 router.post('/verify-otp', verifyOTP);
+
+/**
+ * @openapi
+ * /auth/resend-otp:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Resend email verification OTP
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               email: { type: string }
+ *               userId: { type: string }
+ *     responses:
+ *       200:
+ *         description: OTP resent with registeredAt and otpExpiresAt
+ *       400:
+ *         description: Already verified or registration expired
+ */
+router.post('/resend-otp', resendOTP);
+
+/**
+ * @openapi
+ * /auth/registration-status:
+ *   get:
+ *     tags: [Auth]
+ *     summary: Check registration / verification status by email
+ *     security: []
+ *     parameters:
+ *       - in: query
+ *         name: email
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Registration status including registeredAt, otpExpiresAt, canResendOtp
+ *   post:
+ *     tags: [Auth]
+ *     summary: Check registration / verification status by email (POST)
+ *     security: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string }
+ *     responses:
+ *       200:
+ *         description: Registration status
+ */
+router.get('/registration-status', getRegistrationStatus);
+router.post('/registration-status', getRegistrationStatus);
+
+/**
+ * @openapi
+ * /auth/login-otp/send:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Send login OTP to email (passwordless login step 1)
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string }
+ *     responses:
+ *       200:
+ *         description: Login code sent
+ */
+router.post('/login-otp/send', sendLoginOTP);
+
+/**
+ * @openapi
+ * /auth/login-otp/verify:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Verify login OTP and get tokens (passwordless login step 2)
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [otp]
+ *             properties:
+ *               userId: { type: string }
+ *               email: { type: string }
+ *               otp: { type: string }
+ *               deviceId: { type: string }
+ *               deviceName: { type: string }
+ *     responses:
+ *       200:
+ *         description: Login successful with tokens
+ */
+router.post('/login-otp/verify', verifyLoginOTP);
 
 /**
  * @openapi
@@ -194,6 +302,30 @@ router.post('/reset-password', resetPassword);
  *         description: User profile with subscription info
  */
 router.get('/me', protect, getMe);
+
+/**
+ * @openapi
+ * /auth/me:
+ *   patch:
+ *     tags: [Auth]
+ *     summary: Update current user profile
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               phone: { type: string }
+ *               currentPassword: { type: string, description: Required when changing password }
+ *               newPassword: { type: string, minLength: 6 }
+ *     responses:
+ *       200:
+ *         description: Profile updated
+ *       401:
+ *         description: Current password incorrect
+ */
+router.patch('/me', protect, updateProfile);
 
 /**
  * @openapi

@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema(
     // OTP
     otp: { type: String },
     otpExpires: { type: Date },
-    otpType: { type: String, enum: ['email_verify', 'phone_verify', 'password_reset'] },
+    otpType: { type: String, enum: ['email_verify', 'phone_verify', 'password_reset', 'login_otp'] },
 
     // Refresh Tokens (stored for rotation / revocation)
     refreshTokens: [{ type: String }],
