@@ -14,6 +14,7 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const galleryRoutes = require('./routes/galleryRoutes');
+const configRoutes = require('./routes/configRoutes');
 const { handleStripeWebhook } = require('./controllers/paymentController');
 
 // Middleware
@@ -93,6 +94,7 @@ app.use('/api/v1', subscriptionRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1', galleryRoutes);
+app.use('/api/v1', configRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
