@@ -248,3 +248,17 @@ docker compose up -d --build web admin
 **502 on API** — `docker compose logs api` (wait for MongoDB healthy).
 
 **Rate limit** — `docker compose restart api`
+
+**`npm ci` failed during Docker build** — pull latest code (needs `package-lock.json` in each app folder), then:
+
+```bash
+cd /opt/drsalah/drsallah/deploy
+docker compose build --no-cache admin web api
+docker compose up -d
+```
+
+If it still fails, on the server check lock files exist:
+
+```bash
+ls -la ../admin-panel/package-lock.json ../web/package-lock.json ../Backend/package-lock.json
+```

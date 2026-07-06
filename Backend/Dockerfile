@@ -1,26 +1,20 @@
-# ─── Build Stage ───────────────────────────────────────────────────────────────
-FROM node:20-alpine AS base
+FROM node:20-bookworm-slim AS base
 
 WORKDIR /app
 
-# Install dependencies
-COPY package*.json ./
-RUN npm ci --only=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
-# Copy source
 COPY . .
 
-# ─── Production Stage ───────────────────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:20-bookworm-slim AS production
 
 WORKDIR /app
 
 COPY --from=base /app/node_modules ./node_modules
 COPY --from=base /app .
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -m nodejs
 USER nodejs
 
 EXPOSE 5000
