@@ -10,7 +10,6 @@ router.get('/config/stripe', (req, res) => {
     process.env.STRIPE_PUBLISHABLE_KEY?.trim() ||
     process.env.VITE_STRIPE_PUBLISHABLE_KEY?.trim() ||
     '';
-
   res.json({
     success: true,
     data: {

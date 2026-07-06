@@ -29,8 +29,22 @@ if (process.env.TRUST_PROXY !== 'false') {
 
 // ─── Security Middleware ───────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
+
+const parseOrigins = (...values) =>
+  values
+    .flatMap((v) => (v || '').split(','))
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+const allowedOrigins = parseOrigins(process.env.CLIENT_URL, process.env.ADMIN_URL);
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || '*',
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 

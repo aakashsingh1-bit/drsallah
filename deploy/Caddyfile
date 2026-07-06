@@ -1,0 +1,26 @@
+{
+	email {$CADDY_EMAIL}
+}
+
+# ─── Student web app ───────────────────────────────────────────────────────────
+{$WEB_DOMAIN} {
+	encode gzip
+	reverse_proxy web:80
+}
+
+# ─── Admin panel ───────────────────────────────────────────────────────────────
+{$ADMIN_DOMAIN} {
+	encode gzip
+	reverse_proxy admin:80
+}
+
+# ─── API + docs + Stripe webhook ─────────────────────────────────────────────
+{$API_DOMAIN} {
+	encode gzip
+
+	request_body {
+		max_size 500MB
+	}
+
+	reverse_proxy api:5000
+}
