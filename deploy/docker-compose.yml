@@ -29,7 +29,7 @@ services:
 
   web:
     build:
-      context: ../Educationapp_Dr_webapp_react
+      context: ../web
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
