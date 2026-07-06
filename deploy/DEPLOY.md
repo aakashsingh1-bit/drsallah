@@ -173,12 +173,19 @@ docker compose ps
 
 ```bash
 docker compose exec api node seed.js
+docker compose exec api node seed-demo.js
 ```
 
 Default admin (change password after first login):
 
 - **Email:** `admin@drsallah.com`
 - **Password:** `Admin@12345`
+
+Demo test student (pre-enrolled in demo course):
+
+- **Email:** `student@test.drsallahalzait.me`
+- **Password:** `Test@12345`
+- **Course:** MRCP PACES Demo Course (2 modules, 6 lessons)
 
 ---
 
