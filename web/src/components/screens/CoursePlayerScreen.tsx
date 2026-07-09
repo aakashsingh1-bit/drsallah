@@ -28,6 +28,7 @@ import {
   getResumePosition,
   getWatchProgressForLesson,
 } from "@/lib/watchProgress";
+import { getPlaybackSrc } from "@/lib/playback";
 import { toast } from "sonner";
 
 const CoursePlayerScreen = () => {
@@ -46,6 +47,7 @@ const CoursePlayerScreen = () => {
   const [comment, setComment] = useState("");
   const [resumeHint, setResumeHint] = useState<string | null>(null);
   const [videoLoadError, setVideoLoadError] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastSaveRef = useRef({ at: 0, progress: -1, lessonId: "" });
   const resumeAppliedRef = useRef<string | null>(null);
@@ -77,6 +79,7 @@ const CoursePlayerScreen = () => {
   const isBookmarked = bookmarks.some((b: any) => b._id === activeLessonId);
   const activeIndex = flatLessons.findIndex((l: any) => l._id === activeLessonId);
   const activeWatch = activeLesson ? getWatchProgressForLesson(activeLesson) : null;
+  const playbackSrc = getPlaybackSrc(streamData);
 
   const canPlayLesson = (lesson: any) => {
     if (lesson.isLocked) return false;
@@ -135,6 +138,7 @@ const CoursePlayerScreen = () => {
     resumeAppliedRef.current = null;
     setResumeHint(null);
     setVideoLoadError(false);
+    setIsBuffering(false);
   }, [activeLessonId]);
 
   useEffect(() => {
@@ -152,11 +156,12 @@ const CoursePlayerScreen = () => {
 
   useEffect(() => {
     setVideoLoadError(false);
-  }, [streamData?.streamUrl]);
+    setIsBuffering(false);
+  }, [playbackSrc]);
 
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || !streamData?.streamUrl || !activeLessonId || !activeLesson) return;
+    if (!v || !playbackSrc || !activeLessonId || !activeLesson) return;
 
     const resumeAt = getResumePosition(
       getWatchProgressForLesson(activeLesson).position || 0,
@@ -174,7 +179,7 @@ const CoursePlayerScreen = () => {
     };
 
     v.addEventListener("loadedmetadata", onLoaded, { once: true });
-  }, [streamData?.streamUrl, activeLessonId, activeLesson]);
+  }, [playbackSrc, activeLessonId, activeLesson]);
 
   const onTimeUpdate = () => flushProgress(false);
   const onPause = () => flushProgress(true);
@@ -283,22 +288,32 @@ const CoursePlayerScreen = () => {
                 <Loader2 className="animate-spin text-white" />
                 <span className="text-white/60 text-sm">Loading video…</span>
               </div>
-            ) : streamData?.streamUrl && !videoLoadError ? (
-              <video
-                ref={videoRef}
-                key={streamData.streamUrl}
-                src={streamData.streamUrl}
-                controls
-                controlsList="nodownload"
-                playsInline
-                preload="auto"
-                className="w-full h-full bg-black"
-                onTimeUpdate={onTimeUpdate}
-                onPause={onPause}
-                onEnded={onEnded}
-                onError={() => setVideoLoadError(true)}
-                onContextMenu={(e) => e.preventDefault()}
-              />
+            ) : playbackSrc && !videoLoadError ? (
+              <>
+                <video
+                  ref={videoRef}
+                  key={playbackSrc}
+                  src={playbackSrc}
+                  controls
+                  controlsList="nodownload"
+                  playsInline
+                  preload="auto"
+                  className="w-full h-full bg-black"
+                  onTimeUpdate={onTimeUpdate}
+                  onPause={onPause}
+                  onEnded={onEnded}
+                  onWaiting={() => setIsBuffering(true)}
+                  onPlaying={() => setIsBuffering(false)}
+                  onCanPlay={() => setIsBuffering(false)}
+                  onError={() => setVideoLoadError(true)}
+                  onContextMenu={(e) => e.preventDefault()}
+                />
+                {isBuffering && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/30">
+                    <Loader2 className="animate-spin text-white w-10 h-10" />
+                  </div>
+                )}
+              </>
             ) : activeLesson?.isLocked ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center">
                 <Lock size={40} className="mb-3 opacity-80" />

@@ -1,4 +1,3 @@
-const { pipeline } = require('stream/promises');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { s3, BUCKET } = require('./s3Service');
 
@@ -15,7 +14,7 @@ const guessContentType = (key) => {
 
 /**
  * Stream S3 video to client with HTTP Range support (206 Partial Content).
- * Required for smooth HTML5 playback, seeking, and buffering.
+ * API server fetches from S3 (same region, keep-alive) — smoother than browser → S3 direct.
  */
 const pipeS3VideoToResponse = async (videoKey, req, res) => {
   const params = {
@@ -34,6 +33,7 @@ const pipeS3VideoToResponse = async (videoKey, req, res) => {
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'private, max-age=86400');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Content-Type', s3Response.ContentType || guessContentType(videoKey));
 
   if (s3Response.ContentLength != null) {
@@ -46,19 +46,36 @@ const pipeS3VideoToResponse = async (videoKey, req, res) => {
     res.setHeader('ETag', s3Response.ETag);
   }
 
-  s3Response.Body.on('error', () => {
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, message: 'Video stream interrupted' });
-      return;
-    }
-    res.destroy();
-  });
+  await new Promise((resolve, reject) => {
+    const body = s3Response.Body;
+    const cleanup = () => {
+      req.off('close', onClose);
+    };
+    const onClose = () => {
+      if (body?.destroy) body.destroy();
+    };
 
-  req.on('close', () => {
-    if (s3Response.Body?.destroy) s3Response.Body.destroy();
+    req.on('close', onClose);
+    body.on('error', (err) => {
+      cleanup();
+      if (!res.headersSent) {
+        reject(err);
+        return;
+      }
+      res.destroy();
+      reject(err);
+    });
+    res.on('error', (err) => {
+      cleanup();
+      if (body?.destroy) body.destroy();
+      reject(err);
+    });
+    res.on('finish', () => {
+      cleanup();
+      resolve();
+    });
+    body.pipe(res);
   });
-
-  await pipeline(s3Response.Body, res);
 };
 
 module.exports = { pipeS3VideoToResponse, guessContentType };

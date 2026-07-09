@@ -28,7 +28,10 @@ if (process.env.TRUST_PROXY !== 'false') {
 }
 
 // ─── Security Middleware ───────────────────────────────────────────────────────
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
 const parseOrigins = (...values) =>
   values

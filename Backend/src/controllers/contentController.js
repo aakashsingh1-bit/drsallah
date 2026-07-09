@@ -50,8 +50,29 @@ const buildPlaybackStreamUrl = (lessonId, token, req) => {
     const host = req.get('x-forwarded-host') || req.get('host');
     if (host) apiBase = `${proto}://${host}`;
   }
+  if (!apiBase) {
+    throw new Error('API_URL is not configured');
+  }
   const path = `/api/v1/lessons/${lessonId}/play?token=${encodeURIComponent(token)}`;
-  return apiBase ? `${apiBase}${path}` : path;
+  return `${apiBase}${path}`;
+};
+
+/** Returns direct S3 URL (Android) + API proxy URL (web/admin browsers — smoother buffering) */
+const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
+  const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY());
+  let proxyUrl = null;
+  let proxyExpires = null;
+  try {
+    const token = generatePlaybackToken(userId, lesson._id, lesson.course, {
+      isFree: Boolean(options.isFree),
+      isAdmin: Boolean(options.isAdmin),
+    });
+    proxyUrl = buildPlaybackStreamUrl(lesson._id, token, req);
+    proxyExpires = Math.floor(Date.now() / 1000) + PLAYBACK_EXPIRES_SEC();
+  } catch (err) {
+    console.error('Proxy playback token error:', err.message);
+  }
+  return { streamUrl, expires, proxyUrl, proxyExpires };
 };
 
 const normalizePriceTiers = (value) => {
@@ -667,7 +688,21 @@ exports.getLessonsByModule = async (req, res) => {
  
     for (let i = 0; i < lessonsData.length; i++) {
       if (lessonsData[i].videoKey) {
-        lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
+        if (isAdmin && req.user?._id) {
+          try {
+            const urls = await buildLessonStreamUrls(
+              { _id: lessonsData[i]._id, course: lessonsData[i].course, videoKey: lessonsData[i].videoKey },
+              req,
+              req.user._id,
+              { isAdmin: true }
+            );
+            lessonsData[i].videoUrl = urls.proxyUrl || urls.streamUrl || null;
+          } catch {
+            lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
+          }
+        } else {
+          lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
+        }
       }
       const isFinalLesson = lastLessonId && lessonsData[i]._id.toString() === lastLessonId;
       lessonsData[i].isFinalLesson = Boolean(isFinalLesson);
@@ -1390,8 +1425,15 @@ exports.getStreamUrl = async (req, res) => {
 
   let streamUrl;
   let expires;
+  let proxyUrl;
+  let proxyExpires;
   try {
-    ({ streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY()));
+    ({ streamUrl, expires, proxyUrl, proxyExpires } = await buildLessonStreamUrls(
+      lesson,
+      req,
+      userId,
+      { isFree: false, isAdmin: req.user?.role === 'admin' }
+    ));
   } catch (err) {
     console.error('Stream URL error:', err.message);
     return res.status(500).json({ success: false, message: 'Unable to prepare video stream. Please try again.' });
@@ -1410,7 +1452,9 @@ exports.getStreamUrl = async (req, res) => {
     success: true,
     data: {
       streamUrl,
+      proxyUrl,
       expires,
+      proxyExpires,
       drmType: lesson.drmType,
       lessonTitle: lesson.title,
       duration: lesson.duration,
@@ -1429,8 +1473,15 @@ exports.getFreeLessonStream = async (req, res) => {
 
   let streamUrl;
   let expires;
+  let proxyUrl;
+  let proxyExpires;
   try {
-    ({ streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY()));
+    ({ streamUrl, expires, proxyUrl, proxyExpires } = await buildLessonStreamUrls(
+      lesson,
+      req,
+      req.user._id,
+      { isFree: true }
+    ));
   } catch (err) {
     console.error('Free stream URL error:', err.message);
     return res.status(500).json({ success: false, message: 'Unable to prepare video stream. Please try again.' });
@@ -1442,7 +1493,9 @@ exports.getFreeLessonStream = async (req, res) => {
     success: true,
     data: {
       streamUrl,
+      proxyUrl,
       expires,
+      proxyExpires,
       lessonTitle: lesson.title,
       duration: lesson.duration,
       isFree: true,
