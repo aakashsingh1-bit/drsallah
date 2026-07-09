@@ -90,6 +90,47 @@ const afterVideoUploaded = (lesson) => {
   if (lesson?._id) queueVideoOptimization(lesson._id);
 };
 
+/** Attach playback URLs to a lesson object (videoUrl = preferredUrl for Android/web compatibility). */
+const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
+  const { isAdmin = false, hasCourseAccess = false } = options;
+  const userId = req.user?._id;
+
+  if (!lessonData.videoKey || !userId) {
+    delete lessonData.videoKey;
+    return;
+  }
+
+  if (lessonData.isLocked) {
+    delete lessonData.videoKey;
+    return;
+  }
+
+  const canPlay = isAdmin || lessonData.isFree || hasCourseAccess;
+  if (!canPlay) {
+    delete lessonData.videoKey;
+    return;
+  }
+
+  const useFreeToken = Boolean(lessonData.isFree) && !hasCourseAccess && !isAdmin;
+
+  try {
+    const urls = await buildLessonStreamUrls(lessonData, req, userId, {
+      isAdmin,
+      isFree: useFreeToken,
+    });
+    lessonData.videoUrl = urls.preferredUrl || urls.proxyUrl || urls.streamUrl || null;
+    lessonData.preferredUrl = urls.preferredUrl;
+    lessonData.proxyUrl = urls.proxyUrl;
+    lessonData.streamUrl = urls.streamUrl;
+    lessonData.streamExpires = urls.expires;
+    lessonData.proxyExpires = urls.proxyExpires;
+  } catch {
+    lessonData.videoUrl = await safeSignedUrl(lessonData.videoKey, EXPIRY()) || null;
+  }
+
+  delete lessonData.videoKey;
+};
+
 const normalizePriceTiers = (value) => {
   if (value === undefined) return undefined;
   let tiers = value;
@@ -700,32 +741,20 @@ exports.getLessonsByModule = async (req, res) => {
       CourseReview.findOne({ user: req.user._id, course: courseId }),
     ])
     : [null, null];
- 
-    for (let i = 0; i < lessonsData.length; i++) {
-      if (lessonsData[i].videoKey) {
-        if (isAdmin && req.user?._id) {
-          try {
-            const urls = await buildLessonStreamUrls(
-              lessonsData[i],
-              req,
-              req.user._id,
-              { isAdmin: true }
-            );
-            lessonsData[i].videoUrl = urls.preferredUrl || urls.proxyUrl || urls.streamUrl || null;
-          } catch {
-            lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
-          }
-        } else {
-          lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
-        }
-      }
-      const isFinalLesson = lastLessonId && lessonsData[i]._id.toString() === lastLessonId;
-      lessonsData[i].isFinalLesson = Boolean(isFinalLesson);
-      lessonsData[i].requiresReview = Boolean(isFinalLesson && !review);
-      lessonsData[i].isLocked = Boolean(isFinalLesson && !review);
-      // Remove raw videoKey from response for security
-      delete lessonsData[i].videoKey;
-    }
+
+  let hasCourseAccess = isAdmin;
+  if (!isAdmin && courseId && req.user?._id) {
+    hasCourseAccess = Boolean(await hasActiveCoursePurchase(req.user._id, courseId));
+  }
+
+  for (let i = 0; i < lessonsData.length; i++) {
+    const isFinalLesson = lastLessonId && lessonsData[i]._id.toString() === lastLessonId;
+    lessonsData[i].isFinalLesson = Boolean(isFinalLesson);
+    lessonsData[i].requiresReview = Boolean(isFinalLesson && !review);
+    lessonsData[i].isLocked = Boolean(isFinalLesson && !review);
+
+    await attachLessonVideoUrls(lessonsData[i], req, { isAdmin, hasCourseAccess });
+  }
 
   res.json({ success: true, data: lessonsData });
 };

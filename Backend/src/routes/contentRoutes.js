@@ -502,7 +502,10 @@ router.route('/modules/:id')
  *   get:
  *     tags: [Lessons]
  *     summary: Get all lessons for a module
- *     description: Students see only published lessons. Video keys are never exposed. Use /lessons/{lessonId}/stream to get the actual video URL.
+ *     description: |
+ *       Students see only published lessons. Each playable lesson includes `videoUrl` (same as `preferredUrl`)
+ *       for smooth API-proxy streaming — use this URL in Android ExoPlayer and web players.
+ *       Also returns `proxyUrl`, `streamUrl`, and expiry fields when the user may play the lesson.
  *     parameters:
  *       - in: path
  *         name: moduleId
