@@ -1,7 +1,9 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { IconX } from './Icons';
 
 export default function VideoPlayer({ videoUrl, title, onClose }) {
+  const [loadError, setLoadError] = useState(false);
+
   useEffect(() => {
     const handleEsc = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', handleEsc);
@@ -11,6 +13,10 @@ export default function VideoPlayer({ videoUrl, title, onClose }) {
       document.body.style.overflow = '';
     };
   }, [onClose]);
+
+  useEffect(() => {
+    setLoadError(false);
+  }, [videoUrl]);
 
   if (!videoUrl) return null;
 
@@ -37,25 +43,40 @@ export default function VideoPlayer({ videoUrl, title, onClose }) {
         </div>
 
         {/* Video Player */}
-        <div className="aspect-video bg-black">
-          <video
-            key={videoUrl}
-            src={videoUrl}
-            controls
-            autoPlay
-            playsInline
-            preload="auto"
-            className="w-full h-full"
-            controlsList="nodownload"
-          >
-            Your browser does not support the video tag.
-          </video>
+        <div className="aspect-video bg-black relative">
+          {loadError ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center">
+              <p className="font-semibold mb-2">Video failed to load</p>
+              <p className="text-sm text-white/70 mb-4">The stream URL may have expired. Close and open the lesson again.</p>
+              <button
+                type="button"
+                onClick={() => setLoadError(false)}
+                className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-sm font-semibold"
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <video
+              key={videoUrl}
+              src={videoUrl}
+              controls
+              autoPlay
+              playsInline
+              preload="auto"
+              className="w-full h-full"
+              controlsList="nodownload"
+              onError={() => setLoadError(true)}
+            >
+              Your browser does not support the video tag.
+            </video>
+          )}
         </div>
 
         {/* Footer */}
         <div className="p-3 bg-[#f5f4f0] border-t border-[#e8e6e0] flex items-center justify-between">
           <p className="text-[11px] text-[#6a6f73]">
-            Streamed securely via the platform API
+            Video URL will expire in 1 hour for security
           </p>
           <a
             href={videoUrl}

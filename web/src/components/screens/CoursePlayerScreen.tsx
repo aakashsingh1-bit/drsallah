@@ -45,6 +45,7 @@ const CoursePlayerScreen = () => {
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
   const [resumeHint, setResumeHint] = useState<string | null>(null);
+  const [videoLoadError, setVideoLoadError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastSaveRef = useRef({ at: 0, progress: -1, lessonId: "" });
   const resumeAppliedRef = useRef<string | null>(null);
@@ -133,6 +134,7 @@ const CoursePlayerScreen = () => {
     lastSaveRef.current = { at: 0, progress: -1, lessonId: activeLessonId || "" };
     resumeAppliedRef.current = null;
     setResumeHint(null);
+    setVideoLoadError(false);
   }, [activeLessonId]);
 
   useEffect(() => {
@@ -147,6 +149,10 @@ const CoursePlayerScreen = () => {
       queryClient.invalidateQueries({ queryKey: ["courseContent", courseId] });
     };
   }, [queryClient, courseId]);
+
+  useEffect(() => {
+    setVideoLoadError(false);
+  }, [streamData?.streamUrl]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -219,8 +225,11 @@ const CoursePlayerScreen = () => {
 
   const retryStream = useCallback(() => {
     if (!activeLessonId) return;
+    setVideoLoadError(false);
     queryClient.invalidateQueries({ queryKey: ["lessonStream", activeLessonId, useFreeEndpoint] });
   }, [queryClient, activeLessonId, useFreeEndpoint]);
+
+  const showPlaybackError = streamError || videoLoadError;
 
   if (isLoading) {
     return (
@@ -274,10 +283,10 @@ const CoursePlayerScreen = () => {
                 <Loader2 className="animate-spin text-white" />
                 <span className="text-white/60 text-sm">Loading video…</span>
               </div>
-            ) : streamData?.streamUrl ? (
+            ) : streamData?.streamUrl && !videoLoadError ? (
               <video
                 ref={videoRef}
-                key={activeLessonId || "video"}
+                key={streamData.streamUrl}
                 src={streamData.streamUrl}
                 controls
                 controlsList="nodownload"
@@ -287,6 +296,7 @@ const CoursePlayerScreen = () => {
                 onTimeUpdate={onTimeUpdate}
                 onPause={onPause}
                 onEnded={onEnded}
+                onError={() => setVideoLoadError(true)}
                 onContextMenu={(e) => e.preventDefault()}
               />
             ) : activeLesson?.isLocked ? (
@@ -298,7 +308,7 @@ const CoursePlayerScreen = () => {
                   Leave review
                 </button>
               </div>
-            ) : streamError ? (
+            ) : showPlaybackError ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center">
                 <Lock size={40} className="mb-3 opacity-80" />
                 <p className="font-semibold mb-1">{streamErrorMsg}</p>

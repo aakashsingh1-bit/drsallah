@@ -667,21 +667,7 @@ exports.getLessonsByModule = async (req, res) => {
  
     for (let i = 0; i < lessonsData.length; i++) {
       if (lessonsData[i].videoKey) {
-        if (isAdmin && req.user?._id) {
-          try {
-            const token = generatePlaybackToken(
-              req.user._id,
-              lessonsData[i]._id,
-              lessonsData[i].course,
-              { isAdmin: true }
-            );
-            lessonsData[i].videoUrl = buildPlaybackStreamUrl(lessonsData[i]._id, token, req);
-          } catch {
-            lessonsData[i].videoUrl = null;
-          }
-        } else {
-          lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
-        }
+        lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
       }
       const isFinalLesson = lastLessonId && lessonsData[i]._id.toString() === lastLessonId;
       lessonsData[i].isFinalLesson = Boolean(isFinalLesson);
@@ -1402,14 +1388,14 @@ exports.getStreamUrl = async (req, res) => {
     });
   }
 
-  let playbackToken;
+  let streamUrl;
+  let expires;
   try {
-    playbackToken = generatePlaybackToken(userId, lesson._id, lesson.course, { isFree: false });
+    ({ streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY()));
   } catch (err) {
-    console.error('Playback token error:', err.message);
-    return res.status(500).json({ success: false, message: 'Unable to start video playback. Please try again.' });
+    console.error('Stream URL error:', err.message);
+    return res.status(500).json({ success: false, message: 'Unable to prepare video stream. Please try again.' });
   }
-  const expires = Math.floor(Date.now() / 1000) + PLAYBACK_EXPIRES_SEC();
 
   // Log playback
   SecurityLog.create({
@@ -1423,7 +1409,7 @@ exports.getStreamUrl = async (req, res) => {
   res.json({
     success: true,
     data: {
-      streamUrl: buildPlaybackStreamUrl(lesson._id, playbackToken, req),
+      streamUrl,
       expires,
       drmType: lesson.drmType,
       lessonTitle: lesson.title,
@@ -1441,21 +1427,21 @@ exports.getFreeLessonStream = async (req, res) => {
   if (!lesson.isFree) return res.status(403).json({ success: false, message: 'This lesson is not free' });
   if (!lesson.videoKey) return res.status(400).json({ success: false, message: 'No video uploaded for this lesson' });
 
-  let playbackToken;
+  let streamUrl;
+  let expires;
   try {
-    playbackToken = generatePlaybackToken(req.user._id, lesson._id, lesson.course, { isFree: true });
+    ({ streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY()));
   } catch (err) {
-    console.error('Free playback token error:', err.message);
-    return res.status(500).json({ success: false, message: 'Unable to start video playback. Please try again.' });
+    console.error('Free stream URL error:', err.message);
+    return res.status(500).json({ success: false, message: 'Unable to prepare video stream. Please try again.' });
   }
-  const expires = Math.floor(Date.now() / 1000) + PLAYBACK_EXPIRES_SEC();
 
   Lesson.findByIdAndUpdate(lesson._id, { $inc: { totalViews: 1 } }).catch(() => {});
 
   res.json({
     success: true,
     data: {
-      streamUrl: buildPlaybackStreamUrl(lesson._id, playbackToken, req),
+      streamUrl,
       expires,
       lessonTitle: lesson.title,
       duration: lesson.duration,
