@@ -152,6 +152,30 @@ const deleteFromS3 = async (key) => {
   await s3.send(command);
 };
 
+const downloadToFile = async (key, destPath) => {
+  const { createWriteStream } = require('fs');
+  const { pipeline } = require('stream/promises');
+  const response = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  await pipeline(response.Body, createWriteStream(destPath));
+};
+
+const uploadVideoFromPath = async (filePath, key, mimetype = 'video/mp4') => {
+  const stat = fs.statSync(filePath);
+  if (stat.size > 5 * 1024 * 1024 * 1024) {
+    return uploadLargeFileToS3(filePath, key, mimetype);
+  }
+  const body = fs.createReadStream(filePath);
+  const command = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    Body: body,
+    ContentType: mimetype,
+    ServerSideEncryption: 'AES256',
+  });
+  await s3.send(command);
+  return { key, url: `https://${BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}` };
+};
+
 // ─── Upload thumbnail image ────────────────────────────────────────────────────
 const uploadThumbnail = async (buffer, originalName) => {
   const key = generateS3Key('thumbnails', originalName);
@@ -255,6 +279,8 @@ module.exports = {
   getPresignedUploadUrl,
   getPresignedStreamUrl,
   deleteFromS3,
+  downloadToFile,
+  uploadVideoFromPath,
   uploadThumbnail,
   uploadGalleryImage,
   getVideoUploadUrl,

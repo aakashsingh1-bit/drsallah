@@ -68,9 +68,10 @@ const lessonSchema = new mongoose.Schema(
     videoSize: { type: Number, default: 0 }, // bytes
     uploadStatus: {
       type: String,
-      enum: ['none', 'pending', 'uploading', 'ready', 'failed'],
+      enum: ['none', 'pending', 'uploading', 'processing', 'ready', 'failed'],
       default: 'none',
     },
+    streamVideoKey: { type: String }, // optimized 720p faststart stream
     isEncrypted: { type: Boolean, default: false },
     drmType: { type: String, enum: ['widevine', 'fairplay', 'aes128', 'none'], default: 'none' },
 

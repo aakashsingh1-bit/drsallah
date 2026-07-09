@@ -19,6 +19,11 @@ const {
 } = require('../services/watchProgressService');
 const { pipeS3VideoToResponse } = require('../services/streamPlaybackService');
 const { generatePlaybackToken, verifyPlaybackToken, resolveJwtExpiresIn } = require('../services/tokenService');
+const {
+  getPlaybackVideoKey,
+  queueVideoOptimization,
+  maybeQueueExistingVideo,
+} = require('../services/videoProcessingService');
 
 // ─── Helper: safe S3 signed URL ───────────────────────────────────────────────
 const safeSignedUrl = async (key, expiry = 3600) => {
@@ -57,9 +62,14 @@ const buildPlaybackStreamUrl = (lessonId, token, req) => {
   return `${apiBase}${path}`;
 };
 
-/** Returns direct S3 URL (Android) + API proxy URL (web/admin browsers — smoother buffering) */
+/** Returns direct S3 URL + API proxy URL. All clients should use preferredUrl. */
 const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
-  const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY());
+  const playbackKey = getPlaybackVideoKey(lesson);
+  if (!playbackKey) throw new Error('No video uploaded');
+
+  maybeQueueExistingVideo(lesson);
+
+  const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(playbackKey, EXPIRY());
   let proxyUrl = null;
   let proxyExpires = null;
   try {
@@ -72,7 +82,12 @@ const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
   } catch (err) {
     console.error('Proxy playback token error:', err.message);
   }
-  return { streamUrl, expires, proxyUrl, proxyExpires };
+  const preferredUrl = proxyUrl || streamUrl;
+  return { streamUrl, expires, proxyUrl, proxyExpires, preferredUrl };
+};
+
+const afterVideoUploaded = (lesson) => {
+  if (lesson?._id) queueVideoOptimization(lesson._id);
 };
 
 const normalizePriceTiers = (value) => {
@@ -691,12 +706,12 @@ exports.getLessonsByModule = async (req, res) => {
         if (isAdmin && req.user?._id) {
           try {
             const urls = await buildLessonStreamUrls(
-              { _id: lessonsData[i]._id, course: lessonsData[i].course, videoKey: lessonsData[i].videoKey },
+              lessonsData[i],
               req,
               req.user._id,
               { isAdmin: true }
             );
-            lessonsData[i].videoUrl = urls.proxyUrl || urls.streamUrl || null;
+            lessonsData[i].videoUrl = urls.preferredUrl || urls.proxyUrl || urls.streamUrl || null;
           } catch {
             lessonsData[i].videoUrl = await safeSignedUrl(lessonsData[i].videoKey, EXPIRY()) || null;
           }
@@ -788,6 +803,9 @@ exports.deleteLesson = async (req, res) => {
   if (lesson.videoKey) {
     try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
   }
+  if (lesson.streamVideoKey && lesson.streamVideoKey !== lesson.videoKey) {
+    try { await s3Service.deleteFromS3(lesson.streamVideoKey); } catch {}
+  }
   await Lesson.findByIdAndDelete(req.params.id);
   await recalculateAfterLessonChange(lesson);
   res.json({ success: true, message: 'Lesson deleted' });
@@ -849,9 +867,11 @@ exports.confirmVideoUpload = async (req, res) => {
   existing.videoKey = key;
   existing.uploadStatus = 'ready';
   existing.duration = newDuration;
+  existing.streamVideoKey = undefined;
   await existing.save();
 
   await recalculateAfterLessonChange(existing);
+  afterVideoUploaded(existing);
 
   res.json({ success: true, message: 'Video confirmed. Lesson is ready for streaming.', data: existing });
 };
@@ -870,6 +890,9 @@ exports.uploadVideoDirectly = async (req, res) => {
   if (lesson.videoKey) {
     try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
   }
+  if (lesson.streamVideoKey && lesson.streamVideoKey !== lesson.videoKey) {
+    try { await s3Service.deleteFromS3(lesson.streamVideoKey); } catch {}
+  }
 
   // req.file comes from s3StreamStorage — already uploaded to S3 via multipart streaming
   // No disk writes, no full memory buffer — streamed directly in 10MB chunks
@@ -883,9 +906,11 @@ exports.uploadVideoDirectly = async (req, res) => {
   lesson.uploadStatus = 'ready';
   lesson.videoSize = size;
   lesson.duration = newDuration;
+  lesson.streamVideoKey = undefined;
   await lesson.save();
 
   await recalculateAfterLessonChange(lesson);
+  afterVideoUploaded(lesson);
 
   res.json({ success: true, message: 'Video uploaded to S3 successfully', data: { lessonId, key, lesson } });
 };
@@ -954,9 +979,11 @@ exports.completeDirectMultipartUpload = async (req, res) => {
     lesson.videoKey = key;
     lesson.uploadStatus = 'ready';
     lesson.duration = newDuration;
+    lesson.streamVideoKey = undefined;
     await lesson.save();
 
     await recalculateAfterLessonChange(lesson);
+    afterVideoUploaded(lesson);
 
     res.json({ success: true, message: 'Video uploaded to S3 successfully', data: { lessonId, key, lesson } });
   } catch (err) {
@@ -1261,8 +1288,10 @@ exports.importVideoFromUrl = async (req, res) => {
             lesson.uploadStatus = 'ready';
             lesson.videoSize = totalBytes;
             lesson.duration = newDuration;
+            lesson.streamVideoKey = undefined;
             await lesson.save();
             await recalculateAfterLessonChange(lesson);
+            afterVideoUploaded(lesson);
 
             if (job) {
               job.status = 'completed';
@@ -1374,7 +1403,7 @@ exports.playLessonVideo = async (req, res) => {
   }
 
   try {
-    await pipeS3VideoToResponse(lesson.videoKey, req, res);
+    await pipeS3VideoToResponse(getPlaybackVideoKey(lesson), req, res);
   } catch (err) {
     console.error('Video stream error:', err.message);
     if (!res.headersSent) {
@@ -1427,8 +1456,9 @@ exports.getStreamUrl = async (req, res) => {
   let expires;
   let proxyUrl;
   let proxyExpires;
+  let preferredUrl;
   try {
-    ({ streamUrl, expires, proxyUrl, proxyExpires } = await buildLessonStreamUrls(
+    ({ streamUrl, expires, proxyUrl, proxyExpires, preferredUrl } = await buildLessonStreamUrls(
       lesson,
       req,
       userId,
@@ -1453,6 +1483,7 @@ exports.getStreamUrl = async (req, res) => {
     data: {
       streamUrl,
       proxyUrl,
+      preferredUrl,
       expires,
       proxyExpires,
       drmType: lesson.drmType,
@@ -1475,8 +1506,9 @@ exports.getFreeLessonStream = async (req, res) => {
   let expires;
   let proxyUrl;
   let proxyExpires;
+  let preferredUrl;
   try {
-    ({ streamUrl, expires, proxyUrl, proxyExpires } = await buildLessonStreamUrls(
+    ({ streamUrl, expires, proxyUrl, proxyExpires, preferredUrl } = await buildLessonStreamUrls(
       lesson,
       req,
       req.user._id,
@@ -1494,6 +1526,7 @@ exports.getFreeLessonStream = async (req, res) => {
     data: {
       streamUrl,
       proxyUrl,
+      preferredUrl,
       expires,
       proxyExpires,
       lessonTitle: lesson.title,

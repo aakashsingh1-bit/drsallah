@@ -23,6 +23,11 @@ services:
       MONGO_URI: ${MONGO_URI:-mongodb://mongodb:27017/drsallah}
       API_URL: ${API_URL:-https://api.drsalahalzait.me}
       PLAYBACK_TOKEN_EXPIRES_IN: ${PLAYBACK_TOKEN_EXPIRES_IN:-4h}
+      VIDEO_PROCESSING_ENABLED: ${VIDEO_PROCESSING_ENABLED:-true}
+      VIDEO_MAX_HEIGHT: ${VIDEO_MAX_HEIGHT:-720}
+      VIDEO_MAX_BITRATE_KBPS: ${VIDEO_MAX_BITRATE_KBPS:-2500}
+      VIDEO_OPTIMIZE_MIN_SIZE_MB: ${VIDEO_OPTIMIZE_MIN_SIZE_MB:-20}
+      VIDEO_OPTIMIZE_EXISTING_ON_STARTUP: ${VIDEO_OPTIMIZE_EXISTING_ON_STARTUP:-true}
     depends_on:
       mongodb:
         condition: service_healthy

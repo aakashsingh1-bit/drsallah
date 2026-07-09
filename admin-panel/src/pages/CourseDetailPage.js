@@ -16,6 +16,7 @@ const StatusBadge = ({ published }) => published
   : <span className="badge-yellow"><IconAlertCircle className="w-3 h-3" />Draft</span>;
 
 const VideoStatusBadge = ({ status, videoUrl }) => {
+  if (status === 'processing') return <span className="badge-yellow">Optimizing video…</span>;
   if (status === 'ready') return <span className="badge-green"><IconCheckCircle className="w-3 h-3" />{videoUrl ? 'Video Ready' : 'Ready'}</span>;
   if (status === 'pending') return <span className="badge-yellow">Uploading...</span>;
   return <span className="badge-gray">No Video</span>;

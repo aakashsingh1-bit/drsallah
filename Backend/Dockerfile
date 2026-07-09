@@ -11,6 +11,10 @@ FROM node:20-bookworm-slim AS production
 
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY --from=base /app/node_modules ./node_modules
 COPY --from=base /app .
 

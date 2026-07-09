@@ -312,3 +312,12 @@ exports.sendBulkNotification = async (req, res) => {
 
   res.json({ success: true, message: `Notification sent to ${targetUsers.length} users` });
 };
+
+// ──────────────────── VIDEO OPTIMIZATION ─────────────────────────────────────
+
+/** One-time: optimize all already-uploaded videos for smooth playback (720p + faststart) */
+exports.optimizeAllVideos = async (req, res) => {
+  const { queueAllUnoptimizedVideos } = require('../services/videoProcessingService');
+  const result = await queueAllUnoptimizedVideos();
+  res.json({ success: true, data: result });
+};

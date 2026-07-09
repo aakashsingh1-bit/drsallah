@@ -4,7 +4,7 @@ const {
   getAllUsers, getUserById, updateUser, suspendUser, unsuspendUser,
   deleteUser, forceLogoutUser, getSecurityLogs, resolveSecurityLog,
   getFlaggedUsers, getDashboardStats, getUserGrowth, getVideoAnalytics,
-  sendBulkNotification,
+  sendBulkNotification, optimizeAllVideos,
 } = require('../controllers/adminController');
 const { protect, adminOnly } = require('../middleware/auth');
 
@@ -236,5 +236,17 @@ router.get('/security/flagged-users', getFlaggedUsers);
  *         description: Notifications sent
  */
 router.post('/notifications/broadcast', sendBulkNotification);
+
+/**
+ * @openapi
+ * /admin/videos/optimize-all:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Optimize all uploaded videos for smooth streaming (run once after deploy)
+ *     description: |
+ *       Queues every lesson video without a stream copy for 720p faststart processing.
+ *       Existing videos play immediately using the original file; optimized copies are used when ready.
+ */
+router.post('/videos/optimize-all', optimizeAllVideos);
 
 module.exports = router;

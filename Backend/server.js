@@ -18,6 +18,12 @@ const startServer = async () => {
   const coursesRecalculated = await recalculateAllCourses();
   console.log(`📊 Recalculated stats for ${coursesRecalculated} course(s)`);
 
+  if (process.env.VIDEO_OPTIMIZE_EXISTING_ON_STARTUP === 'true') {
+    const { queueAllUnoptimizedVideos } = require('./src/services/videoProcessingService');
+    const result = await queueAllUnoptimizedVideos();
+    console.log(`🎬 Video optimization: ${result.message}`);
+  }
+
   if (process.env.SMTP_HOST) {
     const from = process.env.SMTP_USER_EMAIL
       ? `${process.env.SMTP_FROM_NAME || 'Dr. Sallah Platform'} <${process.env.SMTP_USER_EMAIL}>`
