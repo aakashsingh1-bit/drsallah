@@ -1,14 +1,29 @@
 const jwt = require('jsonwebtoken');
 
+const TIMESPAN_PATTERN = /^\d+[smhdw]$/i;
+
+/** jsonwebtoken rejects empty/invalid expiresIn — normalize env values safely */
+const resolveJwtExpiresIn = (value, fallback) => {
+  if (value == null) return fallback;
+  const raw = String(value).trim();
+  if (!raw) return fallback;
+  if (/^\d+$/.test(raw)) {
+    const seconds = parseInt(raw, 10);
+    return seconds > 0 ? seconds : fallback;
+  }
+  if (TIMESPAN_PATTERN.test(raw)) return raw;
+  return fallback;
+};
+
 const generateAccessToken = (userId, role) => {
   return jwt.sign({ id: userId, role }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '15m',
+    expiresIn: resolveJwtExpiresIn(process.env.JWT_EXPIRES_IN, '15m'),
   });
 };
 
 const generateRefreshToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+    expiresIn: resolveJwtExpiresIn(process.env.JWT_REFRESH_EXPIRES_IN, '7d'),
   });
 };
 
@@ -25,9 +40,10 @@ const generatePlaybackToken = (userId, lessonId, courseId, options = {}) => {
       courseId: courseId?.toString(),
       scope: 'playback',
       isFree: Boolean(options.isFree),
+      isAdmin: Boolean(options.isAdmin),
     },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.PLAYBACK_TOKEN_EXPIRES_IN || '4h' }
+    { expiresIn: resolveJwtExpiresIn(process.env.PLAYBACK_TOKEN_EXPIRES_IN, '4h') }
   );
 };
 
@@ -40,6 +56,7 @@ const verifyPlaybackToken = (token) => {
 };
 
 module.exports = {
+  resolveJwtExpiresIn,
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken,

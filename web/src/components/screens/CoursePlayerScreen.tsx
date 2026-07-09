@@ -209,6 +209,19 @@ const CoursePlayerScreen = () => {
     );
   };
 
+  const streamErrorMsg = useMemo(() => {
+    const msg = (streamErr as Error)?.message || "";
+    if (msg.includes("expiresIn") || msg.includes("playback")) {
+      return "Video playback is temporarily unavailable. Please try again.";
+    }
+    return msg || "Cannot play this lesson";
+  }, [streamErr]);
+
+  const retryStream = useCallback(() => {
+    if (!activeLessonId) return;
+    queryClient.invalidateQueries({ queryKey: ["lessonStream", activeLessonId, useFreeEndpoint] });
+  }, [queryClient, activeLessonId, useFreeEndpoint]);
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-20">
@@ -228,8 +241,6 @@ const CoursePlayerScreen = () => {
       </div>
     );
   }
-
-  const streamErrorMsg = (streamErr as Error)?.message;
 
   return (
     <div className="min-h-screen bg-background">
@@ -290,11 +301,17 @@ const CoursePlayerScreen = () => {
             ) : streamError ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center">
                 <Lock size={40} className="mb-3 opacity-80" />
-                <p className="font-semibold mb-1">{streamErrorMsg || "Cannot play this lesson"}</p>
-                {!hasAccess && (
+                <p className="font-semibold mb-1">{streamErrorMsg}</p>
+                <button
+                  onClick={retryStream}
+                  className="mt-4 px-5 py-2.5 bg-white/15 hover:bg-white/25 rounded-xl text-sm font-bold"
+                >
+                  Retry
+                </button>
+                {!hasAccess && !activeLesson?.isFree && (
                   <button
                     onClick={() => navigate(`/purchase-course/${courseId}`, { state: { course: content } })}
-                    className="mt-4 px-5 py-2.5 gradient-warm rounded-xl text-sm font-bold flex items-center gap-2"
+                    className="mt-3 px-5 py-2.5 gradient-warm rounded-xl text-sm font-bold flex items-center gap-2"
                   >
                     <BookOpen size={16} /> Enroll to watch
                   </button>

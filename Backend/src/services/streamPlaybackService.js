@@ -1,3 +1,4 @@
+const { pipeline } = require('stream/promises');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { s3, BUCKET } = require('./s3Service');
 
@@ -32,6 +33,7 @@ const pipeS3VideoToResponse = async (videoKey, req, res) => {
   res.status(isPartial ? 206 : 200);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('Connection', 'keep-alive');
   res.setHeader('Content-Type', s3Response.ContentType || guessContentType(videoKey));
 
   if (s3Response.ContentLength != null) {
@@ -56,7 +58,7 @@ const pipeS3VideoToResponse = async (videoKey, req, res) => {
     if (s3Response.Body?.destroy) s3Response.Body.destroy();
   });
 
-  s3Response.Body.pipe(res);
+  await pipeline(s3Response.Body, res);
 };
 
 module.exports = { pipeS3VideoToResponse, guessContentType };

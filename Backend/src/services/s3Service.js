@@ -8,10 +8,14 @@ const {
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
 } = require('@aws-sdk/client-s3');
+const { NodeHttpHandler } = require('@smithy/node-http-handler');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
+
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -19,6 +23,11 @@ const s3 = new S3Client({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
+  requestHandler: new NodeHttpHandler({
+    connectionTimeout: 10_000,
+    socketTimeout: 0,
+    httpsAgent,
+  }),
   // Disable flexible checksums — they add x-amz-checksum-* query params that
   // cause CORS issues when browsers upload directly to S3 via presigned URLs.
   requestChecksumCalculation: 'WHEN_REQUIRED',

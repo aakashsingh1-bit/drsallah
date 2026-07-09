@@ -39,9 +39,12 @@ export default function VideoPlayer({ videoUrl, title, onClose }) {
         {/* Video Player */}
         <div className="aspect-video bg-black">
           <video
+            key={videoUrl}
             src={videoUrl}
             controls
             autoPlay
+            playsInline
+            preload="auto"
             className="w-full h-full"
             controlsList="nodownload"
           >
@@ -52,7 +55,7 @@ export default function VideoPlayer({ videoUrl, title, onClose }) {
         {/* Footer */}
         <div className="p-3 bg-[#f5f4f0] border-t border-[#e8e6e0] flex items-center justify-between">
           <p className="text-[11px] text-[#6a6f73]">
-            Video URL will expire in 1 hour for security
+            Streamed securely via the platform API
           </p>
           <a
             href={videoUrl}
