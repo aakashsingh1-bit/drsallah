@@ -14,13 +14,20 @@
 	reverse_proxy admin:80
 }
 
-# ─── API + docs + Stripe webhook ─────────────────────────────────────────────
+# ─── API + docs + Stripe webhook + video streaming ───────────────────────────
 {$API_DOMAIN} {
-	encode gzip
+	# Do NOT gzip API — breaks binary video streaming
 
 	request_body {
 		max_size 500MB
 	}
 
-	reverse_proxy api:5000
+	reverse_proxy api:5000 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+			response_header_timeout 0
+		}
+	}
 }

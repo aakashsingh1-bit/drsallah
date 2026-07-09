@@ -152,10 +152,12 @@ const CoursePlayerScreen = () => {
     const v = videoRef.current;
     if (!v || !streamData?.streamUrl || !activeLessonId || !activeLesson) return;
 
-    const savedPosition = getWatchProgressForLesson(activeLesson).position || 0;
-    const resumeAt = getResumePosition(savedPosition, activeLesson.duration || 0);
+    const resumeAt = getResumePosition(
+      getWatchProgressForLesson(activeLesson).position || 0,
+      activeLesson.duration || 0
+    );
 
-    const applyResume = () => {
+    const onLoaded = () => {
       if (resumeAppliedRef.current === activeLessonId) return;
       resumeAppliedRef.current = activeLessonId;
       if (resumeAt > 0) {
@@ -165,10 +167,7 @@ const CoursePlayerScreen = () => {
       v.play().catch(() => {});
     };
 
-    v.addEventListener("loadedmetadata", applyResume);
-    v.load();
-
-    return () => v.removeEventListener("loadedmetadata", applyResume);
+    v.addEventListener("loadedmetadata", onLoaded, { once: true });
   }, [streamData?.streamUrl, activeLessonId, activeLesson]);
 
   const onTimeUpdate = () => flushProgress(false);
@@ -176,10 +175,6 @@ const CoursePlayerScreen = () => {
   const onEnded = () => flushProgress(true);
 
   const goToLesson = (lesson: any) => {
-    console.log("lesson", lesson);
-    console.log("canPlayLesson", canPlayLesson(lesson));
-    console.log("hasAccess", hasAccess);
-    console.log(hasAccess);
     if (!canPlayLesson(lesson)) {
       if (!hasAccess) {
         toast.error("Enroll to watch this lesson");
@@ -271,11 +266,12 @@ const CoursePlayerScreen = () => {
             ) : streamData?.streamUrl ? (
               <video
                 ref={videoRef}
-                key={`${activeLessonId}-${streamData.streamUrl}`}
+                key={activeLessonId || "video"}
                 src={streamData.streamUrl}
                 controls
                 controlsList="nodownload"
                 playsInline
+                preload="auto"
                 className="w-full h-full bg-black"
                 onTimeUpdate={onTimeUpdate}
                 onPause={onPause}

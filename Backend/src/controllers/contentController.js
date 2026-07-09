@@ -17,6 +17,8 @@ const {
   computeCourseProgress,
   attachLessonWatchProgress,
 } = require('../services/watchProgressService');
+const { pipeS3VideoToResponse } = require('../services/streamPlaybackService');
+const { generatePlaybackToken, verifyPlaybackToken } = require('../services/tokenService');
 
 // ─── Helper: safe S3 signed URL ───────────────────────────────────────────────
 const safeSignedUrl = async (key, expiry = 3600) => {
@@ -30,6 +32,19 @@ const safeSignedUrl = async (key, expiry = 3600) => {
 };
 
 const EXPIRY = () => parseInt(process.env.SIGNED_URL_EXPIRY) || 3600;
+
+const PLAYBACK_EXPIRES_SEC = () => {
+  const raw = process.env.PLAYBACK_TOKEN_EXPIRES_IN || '4h';
+  if (raw.endsWith('h')) return parseInt(raw, 10) * 3600;
+  if (raw.endsWith('m')) return parseInt(raw, 10) * 60;
+  return parseInt(raw, 10) || 14400;
+};
+
+const buildPlaybackStreamUrl = (lessonId, token) => {
+  const apiBase = (process.env.API_URL || '').replace(/\/$/, '');
+  const path = `/api/v1/lessons/${lessonId}/play?token=${encodeURIComponent(token)}`;
+  return apiBase ? `${apiBase}${path}` : path;
+};
 
 const normalizePriceTiers = (value) => {
   if (value === undefined) return undefined;
@@ -1257,6 +1272,69 @@ exports.getImportStatus = async (req, res) => {
 // VIDEO STREAMING
 // ════════════════════════════════════════════════════════════════
 
+// GET /lessons/:lessonId/play — byte-range video stream (token from /stream endpoint)
+exports.playLessonVideo = async (req, res) => {
+  const { lessonId } = req.params;
+  const token = req.query.token;
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Playback token required' });
+  }
+
+  let decoded;
+  try {
+    decoded = verifyPlaybackToken(token);
+  } catch (err) {
+    return res.status(401).json({
+      success: false,
+      message:
+        err.name === 'TokenExpiredError'
+          ? 'Playback session expired. Please reopen the lesson.'
+          : 'Invalid playback token',
+    });
+  }
+
+  if (decoded.lessonId !== lessonId) {
+    return res.status(403).json({ success: false, message: 'Token does not match lesson' });
+  }
+
+  const lesson = await Lesson.findById(lessonId);
+  if (!lesson || !lesson.isPublished) {
+    return res.status(404).json({ success: false, message: 'Lesson not found' });
+  }
+  if (!lesson.videoKey) {
+    return res.status(400).json({ success: false, message: 'No video uploaded for this lesson' });
+  }
+
+  if (decoded.isFree) {
+    if (!lesson.isFree) {
+      return res.status(403).json({ success: false, message: 'This lesson is not free' });
+    }
+  } else {
+    const purchase = await hasActiveCoursePurchase(decoded.id, lesson.course);
+    if (!purchase) {
+      return res.status(403).json({ success: false, message: 'Active course purchase required' });
+    }
+
+    const lastLessonId = await getLastPublishedLessonId(lesson.course);
+    if (lastLessonId && lesson._id.toString() === lastLessonId) {
+      const review = await CourseReview.findOne({ user: decoded.id, course: lesson.course });
+      if (!review) {
+        return res.status(403).json({ success: false, message: 'Review required for final lesson' });
+      }
+    }
+  }
+
+  try {
+    await pipeS3VideoToResponse(lesson.videoKey, req, res);
+  } catch (err) {
+    console.error('Video stream error:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: 'Failed to stream video' });
+    }
+  }
+};
+
 // GET /lessons/:lessonId/stream  (requires course purchase)
 exports.getStreamUrl = async (req, res) => {
   const lesson = await Lesson.findById(req.params.lessonId);
@@ -1297,7 +1375,8 @@ exports.getStreamUrl = async (req, res) => {
     });
   }
 
-  const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY());
+  const playbackToken = generatePlaybackToken(userId, lesson._id, lesson.course, { isFree: false });
+  const expires = Math.floor(Date.now() / 1000) + PLAYBACK_EXPIRES_SEC();
 
   // Log playback
   SecurityLog.create({
@@ -1311,7 +1390,7 @@ exports.getStreamUrl = async (req, res) => {
   res.json({
     success: true,
     data: {
-      streamUrl,
+      streamUrl: buildPlaybackStreamUrl(lesson._id, playbackToken),
       expires,
       drmType: lesson.drmType,
       lessonTitle: lesson.title,
@@ -1329,13 +1408,20 @@ exports.getFreeLessonStream = async (req, res) => {
   if (!lesson.isFree) return res.status(403).json({ success: false, message: 'This lesson is not free' });
   if (!lesson.videoKey) return res.status(400).json({ success: false, message: 'No video uploaded for this lesson' });
 
-  const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(lesson.videoKey, EXPIRY());
+  const playbackToken = generatePlaybackToken(req.user._id, lesson._id, lesson.course, { isFree: true });
+  const expires = Math.floor(Date.now() / 1000) + PLAYBACK_EXPIRES_SEC();
 
   Lesson.findByIdAndUpdate(lesson._id, { $inc: { totalViews: 1 } }).catch(() => {});
 
   res.json({
     success: true,
-    data: { streamUrl, expires, lessonTitle: lesson.title, duration: lesson.duration, isFree: true },
+    data: {
+      streamUrl: buildPlaybackStreamUrl(lesson._id, playbackToken),
+      expires,
+      lessonTitle: lesson.title,
+      duration: lesson.duration,
+      isFree: true,
+    },
   });
 };
 

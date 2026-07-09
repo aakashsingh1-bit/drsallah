@@ -124,9 +124,17 @@ const getPresignedStreamUrl = async (key, expiresIn = 3600) => {
   const command = new GetObjectCommand({
     Bucket: BUCKET,
     Key: key,
+    ResponseContentType: guessContentType(key),
+    ResponseCacheControl: 'private, max-age=3600',
   });
   const url = await getSignedUrl(s3, command, { expiresIn });
   return { streamUrl: url, expires: Math.floor(Date.now() / 1000) + expiresIn };
+};
+
+const guessContentType = (key) => {
+  const ext = (key || '').split('.').pop()?.toLowerCase();
+  const map = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v' };
+  return map[ext] || 'video/mp4';
 };
 
 // ─── Delete object from S3 ─────────────────────────────────────────────────────

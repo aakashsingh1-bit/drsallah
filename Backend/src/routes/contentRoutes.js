@@ -39,6 +39,7 @@ const {
   // Streaming
   getStreamUrl,
   getFreeLessonStream,
+  playLessonVideo,
   // Security
   reportSecurityEvent,
   // Watch history & bookmarks
@@ -798,6 +799,18 @@ router.get('/videos/import-status/:jobId', protect, adminOnly, getImportStatus);
  *         description: Lesson not found or not published
  */
 router.get('/lessons/:lessonId/stream', protect, getStreamUrl);
+
+/**
+ * @openapi
+ * /lessons/{lessonId}/play:
+ *   get:
+ *     tags: [Video Streaming]
+ *     summary: Stream lesson video with HTTP Range support (byte chunks)
+ *     description: |
+ *       Use the streamUrl from /stream or /free-stream. Supports Range requests for smooth playback.
+ *       Query param `token` is required (short-lived playback JWT).
+ */
+router.get('/lessons/:lessonId/play', playLessonVideo);
 
 /**
  * @openapi

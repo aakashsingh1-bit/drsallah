@@ -8,7 +8,12 @@ const globalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: rateLimitMessage('Too many requests, please try again later.'),
-  skip: (req) => req.method === 'GET' && req.path === '/health',
+  skip: (req) => {
+    if (req.method === 'GET' && req.path === '/health') return true;
+    // Video byte-range requests — many per playback session
+    if (req.method === 'GET' && /\/lessons\/[^/]+\/play$/.test(req.path)) return true;
+    return false;
+  },
 });
 
 const authLimiter = rateLimit({
