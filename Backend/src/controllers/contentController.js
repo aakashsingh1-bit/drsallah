@@ -100,10 +100,12 @@ const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
     return;
   }
 
-  if (lessonData.isLocked) {
+  if (lessonData.isLocked && !lessonData.isFree) {
     delete lessonData.videoKey;
     return;
   }
+
+  normalizeLessonFlags(lessonData);
 
   const canPlay = isAdmin || lessonData.isFree || hasCourseAccess;
   if (!canPlay) {
@@ -239,6 +241,23 @@ const getLastPublishedLessonId = async (courseId) => {
     if (lesson) lastLessonId = lesson._id.toString();
   }
   return lastLessonId;
+};
+
+const normalizeLessonFlags = (lesson) => {
+  lesson.isFree = lesson.isFree === true || lesson.isFree === 'true';
+  lesson.isPublished = lesson.isPublished === true || lesson.isPublished === 'true';
+  return lesson;
+};
+
+/** Final-lesson review applies only to the last paid lesson for enrolled students — never free previews. */
+const applyFinalLessonFlags = (lesson, { lastLessonId, review, hasCourseAccess = false }) => {
+  normalizeLessonFlags(lesson);
+  const isFinalLesson = lastLessonId && lesson._id.toString() === lastLessonId;
+  lesson.isFinalLesson = Boolean(isFinalLesson);
+  const needsReviewGate = Boolean(isFinalLesson && !lesson.isFree && !review);
+  lesson.requiresReview = needsReviewGate;
+  lesson.isLocked = Boolean(needsReviewGate && hasCourseAccess);
+  return lesson;
 };
 
 const hasActiveCoursePurchase = async (userId, courseId) => {
@@ -438,6 +457,7 @@ exports.getCourseFullContent = async (req, res) => {
   }
   await attachCourseAccess(courseObj, req.user);
   await attachCourseRating(courseObj);
+  const hasCourseAccess = Boolean(isAdmin || courseObj.access?.hasAccess);
   const [lastLessonId, review] = isAdmin
     ? [null, null]
     : await Promise.all([
@@ -469,10 +489,7 @@ exports.getCourseFullContent = async (req, res) => {
 
       modObj.lessons = lessons.map((l) => {
         const lessonObj = l.toObject();
-        const isFinalLesson = lastLessonId && lessonObj._id.toString() === lastLessonId;
-        lessonObj.isFinalLesson = Boolean(isFinalLesson);
-        lessonObj.requiresReview = Boolean(isFinalLesson && !review);
-        lessonObj.isLocked = Boolean(isFinalLesson && !review);
+        applyFinalLessonFlags(lessonObj, { lastLessonId, review, hasCourseAccess });
         if (!isAdmin) {
           attachLessonWatchProgress(lessonObj, watchMap.get(lessonObj._id.toString()));
         }
@@ -748,11 +765,7 @@ exports.getLessonsByModule = async (req, res) => {
   }
 
   for (let i = 0; i < lessonsData.length; i++) {
-    const isFinalLesson = lastLessonId && lessonsData[i]._id.toString() === lastLessonId;
-    lessonsData[i].isFinalLesson = Boolean(isFinalLesson);
-    lessonsData[i].requiresReview = Boolean(isFinalLesson && !review);
-    lessonsData[i].isLocked = Boolean(isFinalLesson && !review);
-
+    applyFinalLessonFlags(lessonsData[i], { lastLessonId, review, hasCourseAccess });
     await attachLessonVideoUrls(lessonsData[i], req, { isAdmin, hasCourseAccess });
   }
 
@@ -766,22 +779,25 @@ exports.getLessonById = async (req, res) => {
 
   // Admin bypasses all access checks
   if (req.user?.role !== 'admin') {
-    // Check course purchase access
+    const lessonObj = lesson.toObject();
+    normalizeLessonFlags(lessonObj);
+
     const purchase = await hasActiveCoursePurchase(req.user._id, lesson.course);
-    if (!purchase) {
+    if (!purchase && !lessonObj.isFree) {
       return res.status(403).json({ success: false, message: 'Active course purchase required to access this lesson' });
     }
 
-    // Check if this is the final lesson and requires a review
-    const lastLessonId = await getLastPublishedLessonId(lesson.course);
-    if (lastLessonId && lesson._id.toString() === lastLessonId) {
-      const review = await CourseReview.findOne({ user: req.user._id, course: lesson.course });
-      if (!review) {
-        return res.status(403).json({
-          success: false,
-          message: 'You must submit a course review before accessing the final lesson',
-          requiresReview: true,
-        });
+    if (purchase && !lessonObj.isFree) {
+      const lastLessonId = await getLastPublishedLessonId(lesson.course);
+      if (lastLessonId && lesson._id.toString() === lastLessonId) {
+        const review = await CourseReview.findOne({ user: req.user._id, course: lesson.course });
+        if (!review) {
+          return res.status(403).json({
+            success: false,
+            message: 'You must submit a course review before accessing the final lesson',
+            requiresReview: true,
+          });
+        }
       }
     }
   }

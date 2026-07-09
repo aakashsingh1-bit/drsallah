@@ -82,9 +82,9 @@ const CoursePlayerScreen = () => {
   const playbackSrc = getPlaybackSrc(streamData);
 
   const canPlayLesson = (lesson: any) => {
+    if (lesson.isFree === true || lesson.isFree === "true") return true;
     if (lesson.isLocked) return false;
-    if (hasAccess) return true;
-    return Boolean(lesson.isFree);
+    return hasAccess;
   };
 
   useEffect(() => {
@@ -430,12 +430,16 @@ const CoursePlayerScreen = () => {
                         <button
                           key={lesson._id}
                           onClick={() => {
-                            if(!isActive && !playable)
-                              setShowReview(true);
-                            
+                            if (!playable) {
+                              if (lesson.requiresReview) setShowReview(true);
+                              else if (!lesson.isFree && !hasAccess) {
+                                toast.error("Enroll to watch this lesson");
+                                navigate(`/purchase-course/${courseId}`, { state: { course: stateCourse || content } });
+                              }
+                              return;
+                            }
                             goToLesson(lesson);
-                          }
-                          }
+                          }}
                           className={`w-full flex flex-col gap-1 px-3 py-2.5 text-left text-xs transition-colors ${
                             isActive ? "bg-primary/10 text-primary" : playable ? "hover:bg-secondary/50" : "opacity-50"
                           }`}
