@@ -3,6 +3,7 @@ const {
   PutObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   CreateMultipartUploadCommand,
   UploadPartCommand,
   CompleteMultipartUploadCommand,
@@ -152,6 +153,16 @@ const deleteFromS3 = async (key) => {
   await s3.send(command);
 };
 
+const objectExists = async (key) => {
+  if (!key) return false;
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const downloadToFile = async (key, destPath) => {
   const { createWriteStream } = require('fs');
   const { pipeline } = require('stream/promises');
@@ -279,6 +290,7 @@ module.exports = {
   getPresignedUploadUrl,
   getPresignedStreamUrl,
   deleteFromS3,
+  objectExists,
   downloadToFile,
   uploadVideoFromPath,
   uploadThumbnail,

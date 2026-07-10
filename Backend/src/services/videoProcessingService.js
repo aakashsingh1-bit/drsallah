@@ -23,6 +23,22 @@ const getPlaybackVideoKey = (lesson) => {
   return lesson.streamVideoKey || lesson.videoKey || null;
 };
 
+/** Prefer optimized stream copy; if missing in S3, fall back to original upload. */
+const resolvePlaybackVideoKey = async (lesson) => {
+  if (!lesson) return null;
+  if (lesson.streamVideoKey) {
+    const ok = await s3Service.objectExists(lesson.streamVideoKey);
+    if (ok) return lesson.streamVideoKey;
+    if (lesson._id) {
+      Lesson.findByIdAndUpdate(lesson._id, { $unset: { streamVideoKey: 1 } }).catch(() => {});
+    }
+  }
+  if (lesson.videoKey && (await s3Service.objectExists(lesson.videoKey))) {
+    return lesson.videoKey;
+  }
+  return lesson.videoKey || null;
+};
+
 const streamKeyFor = (sourceKey) => {
   const ext = path.extname(sourceKey) || '.mp4';
   const base = sourceKey.slice(0, -ext.length);
@@ -192,6 +208,7 @@ const queueAllUnoptimizedVideos = async () => {
 
 module.exports = {
   getPlaybackVideoKey,
+  resolvePlaybackVideoKey,
   queueVideoOptimization,
   maybeQueueExistingVideo,
   queueAllUnoptimizedVideos,

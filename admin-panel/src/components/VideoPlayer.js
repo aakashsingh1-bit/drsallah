@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { IconX } from './Icons';
 
-export default function VideoPlayer({ videoUrl, title, onClose }) {
+export default function VideoPlayer({ videoUrl, title, onClose, onRetry }) {
   const [loadError, setLoadError] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     const handleEsc = (e) => { if (e.key === 'Escape') onClose(); };
@@ -16,9 +17,23 @@ export default function VideoPlayer({ videoUrl, title, onClose }) {
 
   useEffect(() => {
     setLoadError(false);
+    setRetrying(false);
   }, [videoUrl]);
 
   if (!videoUrl) return null;
+
+  const handleRetry = async () => {
+    if (onRetry) {
+      setRetrying(true);
+      try {
+        await onRetry();
+      } finally {
+        setRetrying(false);
+      }
+      return;
+    }
+    setLoadError(false);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in" onClick={onClose}>
@@ -47,13 +62,16 @@ export default function VideoPlayer({ videoUrl, title, onClose }) {
           {loadError ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center">
               <p className="font-semibold mb-2">Video failed to load</p>
-              <p className="text-sm text-white/70 mb-4">The stream URL may have expired. Close and open the lesson again.</p>
+              <p className="text-sm text-white/70 mb-4">
+                Stream may have expired or the file is unavailable. Retry to get a fresh link.
+              </p>
               <button
                 type="button"
-                onClick={() => setLoadError(false)}
-                className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-sm font-semibold"
+                onClick={handleRetry}
+                disabled={retrying}
+                className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-sm font-semibold disabled:opacity-50"
               >
-                Retry
+                {retrying ? 'Refreshing…' : 'Retry'}
               </button>
             </div>
           ) : (
@@ -64,6 +82,7 @@ export default function VideoPlayer({ videoUrl, title, onClose }) {
               autoPlay
               playsInline
               preload="auto"
+              crossOrigin="anonymous"
               className="w-full h-full"
               controlsList="nodownload"
               onError={() => setLoadError(true)}

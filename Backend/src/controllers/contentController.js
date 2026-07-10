@@ -20,7 +20,7 @@ const {
 const { pipeS3VideoToResponse } = require('../services/streamPlaybackService');
 const { generatePlaybackToken, verifyPlaybackToken, resolveJwtExpiresIn } = require('../services/tokenService');
 const {
-  getPlaybackVideoKey,
+  resolvePlaybackVideoKey,
   queueVideoOptimization,
   maybeQueueExistingVideo,
 } = require('../services/videoProcessingService');
@@ -64,7 +64,7 @@ const buildPlaybackStreamUrl = (lessonId, token, req) => {
 
 /** Returns direct S3 URL + API proxy URL. All clients should use preferredUrl. */
 const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
-  const playbackKey = getPlaybackVideoKey(lesson);
+  const playbackKey = await resolvePlaybackVideoKey(lesson);
   if (!playbackKey) throw new Error('No video uploaded');
 
   maybeQueueExistingVideo(lesson);
@@ -97,11 +97,13 @@ const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
 
   if (!lessonData.videoKey || !userId) {
     delete lessonData.videoKey;
+    delete lessonData.streamVideoKey;
     return;
   }
 
   if (lessonData.isLocked && !lessonData.isFree) {
     delete lessonData.videoKey;
+    delete lessonData.streamVideoKey;
     return;
   }
 
@@ -110,6 +112,7 @@ const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
   const canPlay = isAdmin || lessonData.isFree || hasCourseAccess;
   if (!canPlay) {
     delete lessonData.videoKey;
+    delete lessonData.streamVideoKey;
     return;
   }
 
@@ -131,6 +134,7 @@ const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
   }
 
   delete lessonData.videoKey;
+  delete lessonData.streamVideoKey;
 };
 
 const normalizePriceTiers = (value) => {
@@ -1448,7 +1452,33 @@ exports.playLessonVideo = async (req, res) => {
   }
 
   try {
-    await pipeS3VideoToResponse(getPlaybackVideoKey(lesson), req, res);
+    const keysToTry = [];
+    const preferred = await resolvePlaybackVideoKey(lesson);
+    if (preferred) keysToTry.push(preferred);
+    if (lesson.videoKey && !keysToTry.includes(lesson.videoKey)) {
+      keysToTry.push(lesson.videoKey);
+    }
+
+    let lastErr = null;
+    for (const key of keysToTry) {
+      try {
+        await pipeS3VideoToResponse(key, req, res);
+        return;
+      } catch (err) {
+        lastErr = err;
+        const missing =
+          err.name === 'NoSuchKey' ||
+          err.Code === 'NoSuchKey' ||
+          err.$metadata?.httpStatusCode === 404;
+        if (!missing || res.headersSent) break;
+        console.warn(`Video key missing, trying fallback: ${key}`);
+      }
+    }
+
+    console.error('Video stream error:', lastErr?.message || 'unknown');
+    if (!res.headersSent) {
+      res.status(404).json({ success: false, message: 'Video file not found in storage. Please re-upload.' });
+    }
   } catch (err) {
     console.error('Video stream error:', err.message);
     if (!res.headersSent) {

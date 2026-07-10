@@ -35,6 +35,16 @@ const pipeS3VideoToResponse = async (videoKey, req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Content-Type', s3Response.ContentType || guessContentType(videoKey));
+  // Allow <video> on admin/web domains to load this cross-origin stream
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Vary', 'Origin');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type');
 
   if (s3Response.ContentLength != null) {
     res.setHeader('Content-Length', String(s3Response.ContentLength));

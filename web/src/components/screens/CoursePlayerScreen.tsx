@@ -48,6 +48,7 @@ const CoursePlayerScreen = () => {
   const [resumeHint, setResumeHint] = useState<string | null>(null);
   const [videoLoadError, setVideoLoadError] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [preferDirectStream, setPreferDirectStream] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastSaveRef = useRef({ at: 0, progress: -1, lessonId: "" });
   const resumeAppliedRef = useRef<string | null>(null);
@@ -79,7 +80,7 @@ const CoursePlayerScreen = () => {
   const isBookmarked = bookmarks.some((b: any) => b._id === activeLessonId);
   const activeIndex = flatLessons.findIndex((l: any) => l._id === activeLessonId);
   const activeWatch = activeLesson ? getWatchProgressForLesson(activeLesson) : null;
-  const playbackSrc = getPlaybackSrc(streamData);
+  const playbackSrc = getPlaybackSrc(streamData, preferDirectStream);
 
   const canPlayLesson = (lesson: any) => {
     if (lesson.isFree === true || lesson.isFree === "true") return true;
@@ -139,6 +140,7 @@ const CoursePlayerScreen = () => {
     setResumeHint(null);
     setVideoLoadError(false);
     setIsBuffering(false);
+    setPreferDirectStream(false);
   }, [activeLessonId]);
 
   useEffect(() => {
@@ -231,8 +233,18 @@ const CoursePlayerScreen = () => {
   const retryStream = useCallback(() => {
     if (!activeLessonId) return;
     setVideoLoadError(false);
+    setPreferDirectStream(false);
     queryClient.invalidateQueries({ queryKey: ["lessonStream", activeLessonId, useFreeEndpoint] });
   }, [queryClient, activeLessonId, useFreeEndpoint]);
+
+  const onVideoError = useCallback(() => {
+    // First failure on proxy → try direct S3 URL once before showing error UI
+    if (!preferDirectStream && streamData?.streamUrl && streamData.streamUrl !== playbackSrc) {
+      setPreferDirectStream(true);
+      return;
+    }
+    setVideoLoadError(true);
+  }, [preferDirectStream, streamData?.streamUrl, playbackSrc]);
 
   const showPlaybackError = streamError || videoLoadError;
 
@@ -305,7 +317,7 @@ const CoursePlayerScreen = () => {
                   onWaiting={() => setIsBuffering(true)}
                   onPlaying={() => setIsBuffering(false)}
                   onCanPlay={() => setIsBuffering(false)}
-                  onError={() => setVideoLoadError(true)}
+                  onError={onVideoError}
                   onContextMenu={(e) => e.preventDefault()}
                 />
                 {isBuffering && (

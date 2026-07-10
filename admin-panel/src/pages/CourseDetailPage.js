@@ -32,7 +32,7 @@ export default function CourseDetailPage() {
   const [modModal, setModModal] = useState({ open: false, data: null });
   const [lesModal, setLesModal] = useState({ open: false, data: null, moduleId: null });
   const [vidUpload, setVidUpload] = useState({ open: false, lesson: null });
-  const [player, setPlayer] = useState({ open: false, url: null, title: '' });
+  const [player, setPlayer] = useState({ open: false, url: null, title: '', lessonId: null, moduleId: null });
 
   const fetchAll = async () => {
     setLoading(true);
@@ -71,6 +71,33 @@ export default function CourseDetailPage() {
   const toggleLesson = async (lesson) => {
     try { await lessonsAPI.update(lesson._id, { isPublished: !lesson.isPublished }); fetchLessons(lesson.module); }
     catch { toast.error('Failed'); }
+  };
+
+  const openPlayer = async (les, moduleId) => {
+    try {
+      const { data } = await lessonsAPI.getByModule(moduleId);
+      const list = data.data || [];
+      setLessonMap((p) => ({ ...p, [moduleId]: list }));
+      const fresh = list.find((l) => l._id === les._id);
+      const url = fresh?.videoUrl || fresh?.preferredUrl || fresh?.streamUrl || les.videoUrl;
+      if (!url) {
+        toast.error('No playable video URL. Re-upload this lesson video.');
+        return;
+      }
+      setPlayer({ open: true, url, title: les.title, lessonId: les._id, moduleId });
+    } catch {
+      if (les.videoUrl) {
+        setPlayer({ open: true, url: les.videoUrl, title: les.title, lessonId: les._id, moduleId });
+      } else {
+        toast.error('Failed to load video stream');
+      }
+    }
+  };
+
+  const retryPlayer = async () => {
+    if (!player.lessonId || !player.moduleId) return;
+    const les = { _id: player.lessonId, title: player.title, videoUrl: player.url };
+    await openPlayer(les, player.moduleId);
   };
 
   const fmt = s => !s ? '0:00' : `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
@@ -167,7 +194,7 @@ export default function CourseDetailPage() {
                       <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         {les.videoUrl && (
                           <button
-                            onClick={() => setPlayer({ open: true, url: les.videoUrl, title: les.title })}
+                            onClick={() => openPlayer(les, mod._id)}
                             title="Play Video"
                             className="btn-icon w-7 h-7 rounded-lg hover:text-brand-600 bg-emerald-50"
                           >
@@ -203,7 +230,14 @@ export default function CourseDetailPage() {
       {modModal.open && <ModuleModal courseId={id} module={modModal.data} onClose={() => setModModal({ open: false, data: null })} onSaved={() => { setModModal({ open: false, data: null }); fetchAll(); }} />}
       {lesModal.open && <LessonModal moduleId={lesModal.moduleId} lesson={lesModal.data} onClose={() => setLesModal({ open: false, data: null, moduleId: null })} onSaved={() => { const mid = lesModal.moduleId; setLesModal({ open: false, data: null, moduleId: null }); fetchLessons(mid); fetchAll(); }} />}
       {vidUpload.open && <VideoUploader lesson={vidUpload.lesson} onClose={() => setVidUpload({ open: false, lesson: null })} onUploaded={() => { const les = vidUpload.lesson; setVidUpload({ open: false, lesson: null }); if (les) fetchLessons(les.module); }} />}
-      {player.open && <VideoPlayer videoUrl={player.url} title={player.title} onClose={() => setPlayer({ open: false, url: null, title: '' })} />}
+      {player.open && (
+        <VideoPlayer
+          videoUrl={player.url}
+          title={player.title}
+          onClose={() => setPlayer({ open: false, url: null, title: '', lessonId: null, moduleId: null })}
+          onRetry={retryPlayer}
+        />
+      )}
     </div>
   );
 }
