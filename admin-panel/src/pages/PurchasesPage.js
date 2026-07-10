@@ -19,6 +19,7 @@ export default function PurchasesPage() {
   const [filter, setFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [activatingId, setActivatingId] = useState(null);
   const limit = 20;
 
   const fetchPurchases = async () => {
@@ -34,6 +35,20 @@ export default function PurchasesPage() {
   };
 
   useEffect(() => { fetchPurchases(); }, [filter, page]);
+
+  const activatePurchase = async (p) => {
+    if (!window.confirm(`Activate access for ${p.user?.name || 'this user'} — ${p.course?.title || 'course'}?`)) return;
+    setActivatingId(p._id);
+    try {
+      await purchasesAPI.activate(p._id, { note: 'Activated from Purchases page (webhook recovery)' });
+      toast.success('Purchase activated');
+      fetchPurchases();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to activate');
+    } finally {
+      setActivatingId(null);
+    }
+  };
 
   const totalPages = Math.ceil(total / limit);
 
@@ -87,11 +102,13 @@ export default function PurchasesPage() {
                   <th className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider px-4 py-3">Start</th>
                   <th className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider px-4 py-3">End</th>
                   <th className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider px-4 py-3">Status</th>
+                  <th className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider px-4 py-3">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {purchases.map((p) => {
                   const expired = isExpired(p);
+                  const canActivate = ['pending', 'failed', 'cancelled', 'expired'].includes(p.status) || expired;
                   return (
                     <tr key={p._id} className="border-b border-[#f5f4f0] hover:bg-[#faf9f6] transition-colors">
                       <td className="px-4 py-3.5">
@@ -117,6 +134,19 @@ export default function PurchasesPage() {
                           <span className={statusColors[p.status] || 'badge-gray'}>
                             {p.status === 'active' ? <><IconCheckCircle className="w-3 h-3" />Active</> : p.status}
                           </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {canActivate ? (
+                          <button
+                            onClick={() => activatePurchase(p)}
+                            disabled={activatingId === p._id}
+                            className="btn-success text-[11px] py-1.5 px-2.5 disabled:opacity-50"
+                          >
+                            {activatingId === p._id ? '…' : 'Activate'}
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-[#b0afab]">—</span>
                         )}
                       </td>
                     </tr>

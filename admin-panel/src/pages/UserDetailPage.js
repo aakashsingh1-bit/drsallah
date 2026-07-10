@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { usersAPI } from '../api';
+import { usersAPI, coursesAPI, purchasesAPI } from '../api';
 import toast from 'react-hot-toast';
 import {
   IconChevronRight, IconSecurity, IconDevice, IconAlertTriangle,
   IconAlertCircle, IconCheckCircle, IconClock, IconGlobe, IconCalendar,
+  IconCourses, IconPlus,
 } from '../components/Icons';
 
 const EVENT_ICONS = {
@@ -20,21 +21,54 @@ const EVENT_ICONS = {
   playback_started: <IconCheckCircle className="w-4 h-4 text-blue-400" />,
   subscription_expired: <IconAlertCircle className="w-4 h-4 text-amber-400" />,
   account_suspended: <IconSecurity className="w-4 h-4 text-rose-400" />,
+  course_purchase_activated: <IconCheckCircle className="w-4 h-4 text-emerald-400" />,
+};
+
+const statusBadge = (status, endDate) => {
+  const expired = status === 'active' && endDate && new Date(endDate) < new Date();
+  if (expired) return <span className="badge-gray">Expired</span>;
+  if (status === 'active') return <span className="badge-green"><IconCheckCircle className="w-3 h-3" />Active</span>;
+  if (status === 'pending') return <span className="badge-yellow">Pending</span>;
+  if (status === 'failed') return <span className="badge-red">Failed</span>;
+  return <span className="badge-gray capitalize">{status}</span>;
 };
 
 export default function UserDetailPage() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [courses, setCourses] = useState([]);
+  const [grantOpen, setGrantOpen] = useState(false);
+  const [granting, setGranting] = useState(false);
+  const [activatingId, setActivatingId] = useState(null);
+  const [form, setForm] = useState({
+    courseId: '',
+    months: 1,
+    amountPaid: '',
+    currency: 'AED',
+    note: '',
+    stripePaymentIntentId: '',
+  });
 
   const fetch = async () => {
     setLoading(true);
-    try { const { data: d } = await usersAPI.getById(id); setData(d.data); }
-    catch { toast.error('Failed to load user'); }
-    finally { setLoading(false); }
+    try {
+      const { data: d } = await usersAPI.getById(id);
+      setData(d.data);
+    } catch {
+      toast.error('Failed to load user');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { fetch(); }, [id]);
+
+  useEffect(() => {
+    coursesAPI.getAll({ limit: 100 })
+      .then(({ data: d }) => setCourses(d.data || []))
+      .catch(() => {});
+  }, []);
 
   const suspend = async () => {
     const r = window.prompt('Reason for suspension?');
@@ -56,13 +90,73 @@ export default function UserDetailPage() {
     catch { toast.error('Failed'); }
   };
 
+  const selectedCourse = courses.find((c) => c._id === form.courseId);
+  const tiers = (selectedCourse?.priceTiers || []).filter((t) => t.isActive !== false);
+
+  useEffect(() => {
+    if (!selectedCourse) return;
+    if (tiers.length) {
+      const tier = tiers.find((t) => Number(t.months) === Number(form.months)) || tiers[0];
+      setForm((f) => ({
+        ...f,
+        months: Number(tier.months),
+        amountPaid: f.amountPaid === '' ? String(tier.price ?? '') : f.amountPaid,
+        currency: tier.currency || f.currency || 'AED',
+      }));
+    }
+  }, [form.courseId]);
+
+  const grantCourse = async (e) => {
+    e.preventDefault();
+    if (!form.courseId || !form.months) {
+      toast.error('Select a course and duration');
+      return;
+    }
+    if (!window.confirm('Activate course access for this student? Use this when Stripe payment succeeded but webhook failed.')) {
+      return;
+    }
+    setGranting(true);
+    try {
+      await usersAPI.grantCourse(id, {
+        courseId: form.courseId,
+        months: Number(form.months),
+        amountPaid: form.amountPaid === '' ? undefined : Number(form.amountPaid),
+        currency: form.currency || 'AED',
+        note: form.note || undefined,
+        stripePaymentIntentId: form.stripePaymentIntentId || undefined,
+      });
+      toast.success('Course access activated');
+      setGrantOpen(false);
+      setForm({ courseId: '', months: 1, amountPaid: '', currency: 'AED', note: '', stripePaymentIntentId: '' });
+      fetch();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to activate course');
+    } finally {
+      setGranting(false);
+    }
+  };
+
+  const activatePurchase = async (purchaseId) => {
+    if (!window.confirm('Activate this pending purchase now?')) return;
+    setActivatingId(purchaseId);
+    try {
+      await purchasesAPI.activate(purchaseId, { note: 'Activated from user detail (webhook recovery)' });
+      toast.success('Purchase activated');
+      fetch();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to activate');
+    } finally {
+      setActivatingId(null);
+    }
+  };
+
   if (loading) return (
     <div className="page-wrap space-y-4">
       {[...Array(4)].map((_,i) => <div key={i} className="skeleton h-28 rounded-2xl" />)}
     </div>
   );
 
-  const { user, recentLogs } = data || {};
+  const { user, recentLogs, purchases } = data || {};
   if (!user) return null;
 
   return (
@@ -102,12 +196,14 @@ export default function UserDetailPage() {
           }
           <button onClick={forceLogout} className="btn-secondary text-[12px] py-2 px-3.5">Logout All</button>
           {user.deviceId && <button onClick={resetDevice} className="btn-secondary text-[12px] py-2 px-3.5"><IconDevice className="w-3.5 h-3.5" />Reset Device</button>}
+          <button onClick={() => setGrantOpen(true)} className="btn-primary text-[12px] py-2 px-3.5">
+            <IconPlus className="w-3.5 h-3.5" />Activate Course
+          </button>
         </div>
       </div>
 
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Subscription */}
         <div className="card p-5">
           <p className="text-[10px] font-bold text-[#6a6f73] uppercase tracking-widest mb-4">Subscription</p>
           {user.activeSubscription ? (
@@ -119,7 +215,6 @@ export default function UserDetailPage() {
           ) : <p className="text-[13px] text-[#9e9e9e]">No active subscription</p>}
         </div>
 
-        {/* Device */}
         <div className="card p-5">
           <p className="text-[10px] font-bold text-[#6a6f73] uppercase tracking-widest mb-4">Device Binding</p>
           {user.deviceId ? (
@@ -132,7 +227,6 @@ export default function UserDetailPage() {
           ) : <p className="text-[13px] text-[#9e9e9e]">No device bound</p>}
         </div>
 
-        {/* Risk */}
         <div className="card p-5">
           <p className="text-[10px] font-bold text-[#6a6f73] uppercase tracking-widest mb-4">Risk Score</p>
           <p className={`text-4xl font-black leading-none ${user.riskScore >= 60 ? 'text-red-600' : user.riskScore >= 30 ? 'text-amber-600' : 'text-emerald-600'}`}>
@@ -148,6 +242,51 @@ export default function UserDetailPage() {
             {user.riskScore >= 60 ? 'High risk — action recommended' : user.riskScore >= 30 ? 'Medium risk — monitor closely' : 'Low risk — normal behavior'}
           </p>
           {user.flagReason && <p className="text-[11px] text-amber-600 mt-1.5">{user.flagReason}</p>}
+        </div>
+      </div>
+
+      {/* Course purchases */}
+      <div className="card overflow-hidden">
+        <div className="p-4 border-b border-[#e8e6e0] flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[14px] font-semibold text-[#1c1d1f]">Course Access</p>
+            <p className="text-[12px] text-[#6a6f73] mt-0.5">Purchases and manual activations</p>
+          </div>
+          <button onClick={() => setGrantOpen(true)} className="btn-secondary text-[12px] py-2 px-3">
+            <IconPlus className="w-3.5 h-3.5" />Grant access
+          </button>
+        </div>
+        <div className="divide-y divide-[#f0ece4]">
+          {(purchases || []).length === 0 ? (
+            <div className="text-center py-10 px-4">
+              <IconCourses className="w-8 h-8 text-[#d1d0cc] mx-auto mb-2" />
+              <p className="text-[13px] text-[#9e9e9e]">No course purchases yet</p>
+              <p className="text-[12px] text-[#b0afab] mt-1">If Stripe paid but access is missing, use Activate Course</p>
+            </div>
+          ) : (purchases || []).map((p) => (
+            <div key={p._id} className="flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3.5 hover:bg-[#faf9f6] transition-colors">
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-medium text-[#1c1d1f] truncate">{p.course?.title || 'Deleted course'}</p>
+                <p className="text-[11px] text-[#9e9e9e] mt-0.5">
+                  {p.months} month{p.months > 1 ? 's' : ''} · {p.currency} {Number(p.amountPaid || 0).toFixed(2)}
+                  {p.paymentProvider === 'manual' ? ' · Manual' : ' · Stripe'}
+                  {p.endDate ? ` · Ends ${new Date(p.endDate).toLocaleDateString()}` : ''}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {statusBadge(p.status, p.endDate)}
+                {['pending', 'failed', 'cancelled', 'expired'].includes(p.status) && (
+                  <button
+                    onClick={() => activatePurchase(p._id)}
+                    disabled={activatingId === p._id}
+                    className="btn-success text-[11px] py-1.5 px-2.5 disabled:opacity-50"
+                  >
+                    {activatingId === p._id ? 'Activating…' : 'Activate'}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -180,6 +319,105 @@ export default function UserDetailPage() {
           }
         </div>
       </div>
+
+      {/* Grant course modal */}
+      {grantOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setGrantOpen(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 border-b border-[#e8e6e0]">
+              <h3 className="text-[16px] font-bold text-[#1c1d1f]">Activate course access</h3>
+              <p className="text-[12px] text-[#6a6f73] mt-1">
+                For {user.name} — use when Stripe payment succeeded but webhook did not activate access.
+              </p>
+            </div>
+            <form onSubmit={grantCourse} className="p-5 space-y-3.5">
+              <div>
+                <label className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider">Course</label>
+                <select
+                  required
+                  value={form.courseId}
+                  onChange={(e) => setForm({ ...form, courseId: e.target.value, amountPaid: '' })}
+                  className="mt-1.5 w-full rounded-xl border border-[#e0ddd6] bg-[#faf9f6] px-3 py-2.5 text-[13px]"
+                >
+                  <option value="">Select course…</option>
+                  {courses.map((c) => (
+                    <option key={c._id} value={c._id}>{c.title}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider">Duration (months)</label>
+                <select
+                  required
+                  value={form.months}
+                  onChange={(e) => {
+                    const months = Number(e.target.value);
+                    const tier = tiers.find((t) => Number(t.months) === months);
+                    setForm({
+                      ...form,
+                      months,
+                      amountPaid: tier ? String(tier.price) : form.amountPaid,
+                      currency: tier?.currency || form.currency,
+                    });
+                  }}
+                  className="mt-1.5 w-full rounded-xl border border-[#e0ddd6] bg-[#faf9f6] px-3 py-2.5 text-[13px]"
+                >
+                  {(tiers.length ? tiers.map((t) => t.months) : [1, 3, 6, 12]).map((m) => (
+                    <option key={m} value={m}>{m} month{m > 1 ? 's' : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider">Amount</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.amountPaid}
+                    onChange={(e) => setForm({ ...form, amountPaid: e.target.value })}
+                    className="mt-1.5 w-full rounded-xl border border-[#e0ddd6] bg-[#faf9f6] px-3 py-2.5 text-[13px]"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider">Currency</label>
+                  <input
+                    value={form.currency}
+                    onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
+                    className="mt-1.5 w-full rounded-xl border border-[#e0ddd6] bg-[#faf9f6] px-3 py-2.5 text-[13px]"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider">Stripe Payment Intent (optional)</label>
+                <input
+                  value={form.stripePaymentIntentId}
+                  onChange={(e) => setForm({ ...form, stripePaymentIntentId: e.target.value })}
+                  className="mt-1.5 w-full rounded-xl border border-[#e0ddd6] bg-[#faf9f6] px-3 py-2.5 text-[13px] font-mono"
+                  placeholder="pi_..."
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-[#6a6f73] uppercase tracking-wider">Note (optional)</label>
+                <textarea
+                  value={form.note}
+                  onChange={(e) => setForm({ ...form, note: e.target.value })}
+                  rows={2}
+                  className="mt-1.5 w-full rounded-xl border border-[#e0ddd6] bg-[#faf9f6] px-3 py-2.5 text-[13px]"
+                  placeholder="e.g. Paid via Stripe, webhook missed"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setGrantOpen(false)} className="btn-secondary flex-1 py-2.5 text-[13px]">Cancel</button>
+                <button type="submit" disabled={granting} className="btn-primary flex-1 py-2.5 text-[13px] disabled:opacity-50">
+                  {granting ? 'Activating…' : 'Activate access'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

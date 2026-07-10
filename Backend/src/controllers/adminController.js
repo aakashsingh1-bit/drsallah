@@ -39,7 +39,13 @@ exports.getUserById = async (req, res) => {
   const user = await User.findById(req.params.id).populate('activeSubscription');
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-  const recentLogs = await SecurityLog.find({ user: user._id }).sort({ createdAt: -1 }).limit(20);
+  const [recentLogs, purchases] = await Promise.all([
+    SecurityLog.find({ user: user._id }).sort({ createdAt: -1 }).limit(20),
+    CoursePurchase.find({ user: user._id })
+      .populate('course', 'title category priceTiers')
+      .sort({ createdAt: -1 })
+      .limit(50),
+  ]);
 
   let deletedUserInfo = null;
   if (user.deletedAt) {
@@ -58,7 +64,7 @@ exports.getUserById = async (req, res) => {
     }
   }
 
-  res.json({ success: true, data: { user, recentLogs, deletedUserInfo } });
+  res.json({ success: true, data: { user, recentLogs, purchases, deletedUserInfo } });
 };
 
 exports.updateUser = async (req, res) => {
@@ -320,4 +326,216 @@ exports.optimizeAllVideos = async (req, res) => {
   const { queueAllUnoptimizedVideos } = require('../services/videoProcessingService');
   const result = await queueAllUnoptimizedVideos();
   res.json({ success: true, data: result });
+};
+
+// ──────────────────── MANUAL COURSE ACCESS ───────────────────────────────────
+
+const addMonths = (date, months) => {
+  const end = new Date(date);
+  end.setMonth(end.getMonth() + Number(months));
+  return end;
+};
+
+const finalizeActivePurchase = async (purchase, { adminId, note, source }) => {
+  const wasAlreadyActive = purchase.status === 'active' && purchase.endDate && new Date(purchase.endDate) >= new Date();
+  const startDate = new Date();
+  purchase.status = 'active';
+  purchase.startDate = purchase.startDate || startDate;
+  purchase.endDate = addMonths(startDate, purchase.months);
+  purchase.paymentProvider = purchase.paymentProvider || 'manual';
+  purchase.metadata = {
+    ...(purchase.metadata || {}),
+    activatedByAdmin: adminId?.toString(),
+    activatedAt: new Date().toISOString(),
+    activationNote: note || undefined,
+    activationSource: source || 'admin_manual',
+  };
+  await purchase.save();
+
+  if (!wasAlreadyActive) {
+    await Course.findByIdAndUpdate(purchase.course, { $inc: { totalEnrolled: 1 } }).catch(() => {});
+  }
+
+  await Promise.all([
+    Notification.create({
+      user: purchase.user,
+      title: 'Course Access Active',
+      body: 'Your course access has been activated. Enjoy learning!',
+      type: 'general',
+    }).catch(() => {}),
+    SecurityLog.create({
+      user: purchase.user,
+      event: 'course_purchase_activated',
+      severity: 'info',
+      details: {
+        courseId: purchase.course,
+        purchaseId: purchase._id,
+        endDate: purchase.endDate,
+        activatedByAdmin: adminId?.toString(),
+        note: note || null,
+        source: source || 'admin_manual',
+      },
+    }).catch(() => {}),
+  ]);
+
+  return purchase;
+};
+
+/**
+ * POST /admin/users/:id/grant-course
+ * Manually grant/activate course access (e.g. Stripe paid but webhook missed).
+ * Body: { courseId, months, amountPaid?, currency?, note?, stripePaymentIntentId? }
+ */
+exports.grantUserCourseAccess = async (req, res) => {
+  const userId = req.params.id;
+  const {
+    courseId,
+    months,
+    amountPaid,
+    currency,
+    note,
+    stripePaymentIntentId,
+  } = req.body;
+
+  if (!courseId || !months) {
+    return res.status(400).json({ success: false, message: 'courseId and months are required' });
+  }
+
+  const selectedMonths = Number(months);
+  if (!Number.isInteger(selectedMonths) || selectedMonths < 1 || selectedMonths > 12) {
+    return res.status(400).json({ success: false, message: 'months must be an integer from 1 to 12' });
+  }
+
+  const user = await User.findById(userId);
+  if (!user || user.deletedAt) {
+    return res.status(404).json({ success: false, message: 'User not found' });
+  }
+
+  const course = await Course.findById(courseId);
+  if (!course) {
+    return res.status(404).json({ success: false, message: 'Course not found' });
+  }
+
+  // Prefer activating an existing pending/failed purchase for this course
+  let purchase = await CoursePurchase.findOne({
+    user: userId,
+    course: courseId,
+    status: { $in: ['pending', 'failed', 'cancelled'] },
+  }).sort({ createdAt: -1 });
+
+  if (purchase) {
+    purchase.months = selectedMonths || purchase.months;
+    if (amountPaid != null && amountPaid !== '') purchase.amountPaid = Number(amountPaid);
+    if (currency) purchase.currency = String(currency).toUpperCase();
+    if (stripePaymentIntentId) purchase.stripePaymentIntentId = stripePaymentIntentId;
+    purchase = await finalizeActivePurchase(purchase, {
+      adminId: req.user._id,
+      note,
+      source: 'admin_activate_existing',
+    });
+  } else {
+    // If already has active access, extend from current endDate
+    const active = await CoursePurchase.findOne({
+      user: userId,
+      course: courseId,
+      status: 'active',
+      endDate: { $gte: new Date() },
+    }).sort({ endDate: -1 });
+
+    if (active) {
+      const from = new Date(active.endDate);
+      active.months = selectedMonths;
+      active.endDate = addMonths(from, selectedMonths);
+      active.metadata = {
+        ...(active.metadata || {}),
+        extendedByAdmin: req.user._id.toString(),
+        extendedAt: new Date().toISOString(),
+        extensionNote: note || undefined,
+      };
+      await active.save();
+      purchase = active;
+
+      await SecurityLog.create({
+        user: userId,
+        event: 'course_purchase_activated',
+        severity: 'info',
+        details: {
+          courseId,
+          purchaseId: active._id,
+          endDate: active.endDate,
+          activatedByAdmin: req.user._id.toString(),
+          note: note || null,
+          source: 'admin_extend',
+        },
+      }).catch(() => {});
+    } else {
+      const tier = course.priceTiers?.find(
+        (t) => t.isActive !== false && Number(t.months) === selectedMonths
+      );
+      purchase = await CoursePurchase.create({
+        user: userId,
+        course: courseId,
+        months: selectedMonths,
+        status: 'pending',
+        amountPaid: amountPaid != null && amountPaid !== ''
+          ? Number(amountPaid)
+          : Number(tier?.price || 0),
+        currency: (currency || tier?.currency || 'AED').toUpperCase(),
+        paymentProvider: 'manual',
+        stripePaymentIntentId: stripePaymentIntentId || undefined,
+      });
+      purchase = await finalizeActivePurchase(purchase, {
+        adminId: req.user._id,
+        note,
+        source: 'admin_grant_new',
+      });
+    }
+  }
+
+  const populated = await CoursePurchase.findById(purchase._id)
+    .populate('course', 'title category')
+    .populate('user', 'name email');
+
+  res.json({
+    success: true,
+    message: 'Course access activated successfully',
+    data: populated,
+  });
+};
+
+/**
+ * POST /admin/course-purchases/:id/activate
+ * Activate a pending/failed purchase (webhook miss recovery).
+ * Body: { note?, months? }
+ */
+exports.activateCoursePurchase = async (req, res) => {
+  const purchase = await CoursePurchase.findById(req.params.id);
+  if (!purchase) {
+    return res.status(404).json({ success: false, message: 'Purchase not found' });
+  }
+
+  if (purchase.status === 'active' && purchase.endDate && new Date(purchase.endDate) >= new Date()) {
+    return res.status(400).json({ success: false, message: 'Purchase is already active' });
+  }
+
+  if (req.body.months) {
+    const m = Number(req.body.months);
+    if (Number.isInteger(m) && m >= 1 && m <= 12) purchase.months = m;
+  }
+
+  const updated = await finalizeActivePurchase(purchase, {
+    adminId: req.user._id,
+    note: req.body.note,
+    source: 'admin_activate_purchase',
+  });
+
+  const populated = await CoursePurchase.findById(updated._id)
+    .populate('course', 'title category')
+    .populate('user', 'name email');
+
+  res.json({
+    success: true,
+    message: 'Purchase activated successfully',
+    data: populated,
+  });
 };

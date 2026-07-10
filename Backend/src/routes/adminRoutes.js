@@ -5,6 +5,7 @@ const {
   deleteUser, forceLogoutUser, getSecurityLogs, resolveSecurityLog,
   getFlaggedUsers, getDashboardStats, getUserGrowth, getVideoAnalytics,
   sendBulkNotification, optimizeAllVideos,
+  grantUserCourseAccess, activateCoursePurchase,
 } = require('../controllers/adminController');
 const { protect, adminOnly } = require('../middleware/auth');
 
@@ -144,6 +145,25 @@ router.post('/users/:id/suspend', suspendUser);
  *         description: User unsuspended
  */
 router.post('/users/:id/unsuspend', unsuspendUser);
+
+/**
+ * @openapi
+ * /admin/users/{id}/grant-course:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Manually grant or activate course access for a user
+ *     description: Use when Stripe payment succeeded but webhook failed, or for complimentary access.
+ */
+router.post('/users/:id/grant-course', grantUserCourseAccess);
+
+/**
+ * @openapi
+ * /admin/course-purchases/{id}/activate:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Activate a pending/failed course purchase
+ */
+router.post('/course-purchases/:id/activate', activateCoursePurchase);
 
 /**
  * @openapi

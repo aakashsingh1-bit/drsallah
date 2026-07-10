@@ -60,6 +60,7 @@ export const usersAPI = {
   forceLogout: (id) => api.post(`/admin/users/${id}/force-logout`),
   resetDevice: (id) => api.post(`/auth/reset-device/${id}`),
   getFlagged: () => api.get('/admin/security/flagged-users'),
+  grantCourse: (id, data) => api.post(`/admin/users/${id}/grant-course`, data),
 };
 
 // ── Courses ───────────────────────────────────────────────────────────────────
@@ -144,6 +145,7 @@ export const purchasesAPI = {
   createCheckout: (courseId, data) => api.post(`/courses/${courseId}/purchase/checkout`, data),
   createPaymentIntent: (courseId, data) => api.post(`/courses/${courseId}/purchase/payment-intent`, data),
   confirmPayment: (courseId, data) => api.post(`/courses/${courseId}/purchase/confirm`, data),
+  activate: (id, data) => api.post(`/admin/course-purchases/${id}/activate`, data || {}),
 };
 
 // ── Course Reviews ──────────────────────────────────────────────
