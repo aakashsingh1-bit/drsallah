@@ -230,9 +230,24 @@ VIDEO_OPTIMIZE_MAX_ATTEMPTS=3
 After deploy, rebuild old lessons for HLS once:
 
 ```bash
-# Admin JWT
-curl -X POST https://api.drsalahalzait.me/api/v1/admin/videos/optimize-all \
-  -H "Authorization: Bearer YOUR_ADMIN_JWT"
+# On the server (Linux)
+cd /opt/drsalah/drsallah/deploy   # your path
+chmod +x optimize-all-videos.sh
+ADMIN_EMAIL='admin@you.com' ADMIN_PASSWORD='***' ./optimize-all-videos.sh
+```
+
+```powershell
+# From Windows (PowerShell)
+cd C:\Users\User\Desktop\DrSallah\deploy
+$env:ADMIN_EMAIL = 'admin@you.com'
+$env:ADMIN_PASSWORD = '***'
+.\optimize-all-videos.ps1
+```
+
+Or with an existing admin JWT:
+
+```bash
+ACCESS_TOKEN='eyJ...' ./optimize-all-videos.sh
 ```
 
 Hard-refresh the student web app after deploy so it no longer caches an old HQ stream URL.

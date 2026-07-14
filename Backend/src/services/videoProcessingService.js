@@ -201,32 +201,59 @@ const optimizeLessonVideo = async (lessonId) => {
   const outputPath = path.join(tmpDir, `${lessonId}-out.mp4`);
   const hlsDir = path.join(tmpDir, `${lessonId}-hls`);
 
+  // Already have optimized MP4 — only add HLS (fast). Don't re-download 1GB master.
+  const hlsOnly = Boolean(HLS_ENABLED() && lesson.streamVideoKey && !lesson.hlsPrefix);
+  const sourceKey = hlsOnly ? lesson.streamVideoKey : lesson.videoKey;
+
   await Lesson.findByIdAndUpdate(lessonId, { uploadStatus: 'processing' });
 
   try {
-    console.log(`🎬 Downloading for optimize: lesson ${lessonId}`);
-    await s3Service.downloadToFile(lesson.videoKey, inputPath);
+    console.log(
+      hlsOnly
+        ? `🎬 HLS-only for lesson ${lessonId} (using existing optimized MP4)`
+        : `🎬 Downloading for optimize: lesson ${lessonId}`
+    );
+    await s3Service.downloadToFile(sourceKey, inputPath);
 
     const info = await probeVideo(inputPath);
     const sizeMb = info.size / (1024 * 1024);
-    console.log(
-      `🎬 Transcoding lesson ${lessonId} (${sizeMb.toFixed(0)} MB → 720p progressive` +
-        (HLS_ENABLED() ? ' + HLS 360p/720p' : '') +
-        `)`
-    );
 
-    await transcodeForStreaming(inputPath, outputPath);
+    let streamKey = lesson.streamVideoKey || null;
+    let outStatsSize = Number(lesson.videoSize) || info.size;
+    let outMb = outStatsSize / (1024 * 1024);
 
-    const streamKey = streamKeyFor(lesson.videoKey);
-    const outStats = fs.statSync(outputPath);
-    const outMb = outStats.size / (1024 * 1024);
-    await s3Service.uploadVideoFromPath(outputPath, streamKey, 'video/mp4');
+    if (!hlsOnly) {
+      console.log(
+        `🎬 Transcoding lesson ${lessonId} (${sizeMb.toFixed(0)} MB → 720p progressive` +
+          (HLS_ENABLED() ? ' + HLS 360p/720p' : '') +
+          `)`
+      );
+      await transcodeForStreaming(inputPath, outputPath);
+      streamKey = streamKeyFor(lesson.videoKey);
+      const outStats = fs.statSync(outputPath);
+      outStatsSize = outStats.size;
+      outMb = outStatsSize / (1024 * 1024);
+      await s3Service.uploadVideoFromPath(outputPath, streamKey, 'video/mp4');
 
-    let hlsPrefix = null;
-    if (HLS_ENABLED()) {
+      if (
+        lesson.streamVideoKey &&
+        lesson.streamVideoKey !== lesson.videoKey &&
+        lesson.streamVideoKey !== streamKey
+      ) {
+        await s3Service.deleteFromS3(lesson.streamVideoKey).catch(() => {});
+      }
+    } else {
+      console.log(
+        `🎬 Building HLS for lesson ${lessonId} from ${sizeMb.toFixed(0)} MB optimized MP4`
+      );
+    }
+
+    let hlsPrefix = lesson.hlsPrefix || null;
+    if (HLS_ENABLED() && !lesson.hlsPrefix) {
       fs.mkdirSync(hlsDir, { recursive: true });
       const lowKbps = Math.min(800, maxBitrateKbps());
       const highKbps = maxBitrateKbps();
+      // Encode HLS from whatever we downloaded (optimized MP4 or original)
       await transcodeHlsRung(inputPath, hlsDir, '360p', 360, lowKbps, 64);
       await transcodeHlsRung(inputPath, hlsDir, '720p', maxHeight(), highKbps, 96);
       writeMasterPlaylist(hlsDir);
@@ -237,24 +264,26 @@ const optimizeLessonVideo = async (lessonId) => {
       await s3Service.uploadDirectory(hlsDir, hlsPrefix);
     }
 
-    if (lesson.streamVideoKey && lesson.streamVideoKey !== lesson.videoKey && lesson.streamVideoKey !== streamKey) {
-      await s3Service.deleteFromS3(lesson.streamVideoKey).catch(() => {});
-    }
-
     await Lesson.findByIdAndUpdate(lessonId, {
       streamVideoKey: streamKey,
-      hlsPrefix: hlsPrefix || lesson.hlsPrefix || null,
+      hlsPrefix: hlsPrefix || null,
       uploadStatus: 'ready',
-      originalVideoSize: lesson.originalVideoSize || info.size || lesson.videoSize || 0,
-      videoSize: outStats.size,
+      originalVideoSize:
+        lesson.originalVideoSize ||
+        (hlsOnly ? lesson.originalVideoSize || 0 : info.size) ||
+        lesson.videoSize ||
+        0,
+      videoSize: outStatsSize,
       optimizeAttempts: 0,
       optimizeNextAttemptAt: null,
       optimizeLastError: null,
     });
 
     console.log(
-      `✅ Optimized lesson ${lessonId}: ${sizeMb.toFixed(0)} MB → ${outMb.toFixed(0)} MB` +
-        (hlsPrefix ? ' + HLS adaptive' : '')
+      hlsOnly
+        ? `✅ HLS ready lesson ${lessonId} (kept ${outMb.toFixed(0)} MB MP4 + adaptive)`
+        : `✅ Optimized lesson ${lessonId}: ${sizeMb.toFixed(0)} MB → ${outMb.toFixed(0)} MB` +
+            (hlsPrefix ? ' + HLS adaptive' : '')
     );
   } catch (err) {
     const attempts = Number(lesson.optimizeAttempts || 0) + 1;
