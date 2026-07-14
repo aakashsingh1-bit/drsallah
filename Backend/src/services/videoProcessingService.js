@@ -201,28 +201,50 @@ const optimizeLessonVideo = async (lessonId) => {
   const outputPath = path.join(tmpDir, `${lessonId}-out.mp4`);
   const hlsDir = path.join(tmpDir, `${lessonId}-hls`);
 
-  // Already have optimized MP4 — only add HLS (fast). Don't re-download 1GB master.
-  const hlsOnly = Boolean(HLS_ENABLED() && lesson.streamVideoKey && !lesson.hlsPrefix);
-  const sourceKey = hlsOnly ? lesson.streamVideoKey : lesson.videoKey;
+  // Prefer existing optimized MP4 (DB field OR S3 …-stream.mp4 sibling) — never re-chew 1GB master for HLS.
+  let existingStreamKey = lesson.streamVideoKey || null;
+  if (!existingStreamKey && lesson.videoKey) {
+    const candidate = streamKeyFor(lesson.videoKey);
+    if (candidate !== lesson.videoKey && (await s3Service.objectExists(candidate))) {
+      existingStreamKey = candidate;
+      console.log(`ℹ️ Found existing stream file for lesson ${lessonId}: ${candidate}`);
+    }
+  }
+
+  const hlsOnly = Boolean(HLS_ENABLED() && existingStreamKey && !lesson.hlsPrefix);
+  const sourceKey = hlsOnly ? existingStreamKey : lesson.videoKey;
 
   await Lesson.findByIdAndUpdate(lessonId, { uploadStatus: 'processing' });
 
   try {
-    console.log(
-      hlsOnly
-        ? `🎬 HLS-only for lesson ${lessonId} (using existing optimized MP4)`
-        : `🎬 Downloading for optimize: lesson ${lessonId}`
-    );
+    if (hlsOnly) {
+      console.log(`🎬 HLS-only for lesson ${lessonId} (using existing optimized MP4)`);
+    } else {
+      console.log(
+        `🎬 Downloading for optimize: lesson ${lessonId}` +
+          (existingStreamKey
+            ? ''
+            : ' [no streamVideoKey yet — full encode from original]')
+      );
+    }
     await s3Service.downloadToFile(sourceKey, inputPath);
 
     const info = await probeVideo(inputPath);
     const sizeMb = info.size / (1024 * 1024);
 
-    let streamKey = lesson.streamVideoKey || null;
+    let streamKey = existingStreamKey || null;
     let outStatsSize = Number(lesson.videoSize) || info.size;
     let outMb = outStatsSize / (1024 * 1024);
 
-    if (!hlsOnly) {
+    // If original download is already streaming-sized, skip progressive re-encode — HLS only.
+    const alreadySmall =
+      !hlsOnly &&
+      HLS_ENABLED() &&
+      sizeMb > 0 &&
+      sizeMb <= LARGE_MB &&
+      (!info.height || info.height <= maxHeight() + 32);
+
+    if (!hlsOnly && !alreadySmall) {
       console.log(
         `🎬 Transcoding lesson ${lessonId} (${sizeMb.toFixed(0)} MB → 720p progressive` +
           (HLS_ENABLED() ? ' + HLS 360p/720p' : '') +
@@ -242,10 +264,20 @@ const optimizeLessonVideo = async (lessonId) => {
       ) {
         await s3Service.deleteFromS3(lesson.streamVideoKey).catch(() => {});
       }
+    } else if (alreadySmall) {
+      // Source file itself is already optimized — reuse as stream key if needed
+      streamKey = existingStreamKey || lesson.videoKey;
+      outStatsSize = info.size;
+      outMb = sizeMb;
+      console.log(
+        `🎬 Source already small (${sizeMb.toFixed(0)} MB) — skipping progressive, building HLS only`
+      );
     } else {
       console.log(
         `🎬 Building HLS for lesson ${lessonId} from ${sizeMb.toFixed(0)} MB optimized MP4`
       );
+      outStatsSize = info.size;
+      outMb = sizeMb;
     }
 
     let hlsPrefix = lesson.hlsPrefix || null;
@@ -253,7 +285,6 @@ const optimizeLessonVideo = async (lessonId) => {
       fs.mkdirSync(hlsDir, { recursive: true });
       const lowKbps = Math.min(800, maxBitrateKbps());
       const highKbps = maxBitrateKbps();
-      // Encode HLS from whatever we downloaded (optimized MP4 or original)
       await transcodeHlsRung(inputPath, hlsDir, '360p', 360, lowKbps, 64);
       await transcodeHlsRung(inputPath, hlsDir, '720p', maxHeight(), highKbps, 96);
       writeMasterPlaylist(hlsDir);
@@ -270,7 +301,7 @@ const optimizeLessonVideo = async (lessonId) => {
       uploadStatus: 'ready',
       originalVideoSize:
         lesson.originalVideoSize ||
-        (hlsOnly ? lesson.originalVideoSize || 0 : info.size) ||
+        (hlsOnly || alreadySmall ? lesson.originalVideoSize || 0 : info.size) ||
         lesson.videoSize ||
         0,
       videoSize: outStatsSize,
@@ -280,7 +311,7 @@ const optimizeLessonVideo = async (lessonId) => {
     });
 
     console.log(
-      hlsOnly
+      hlsOnly || alreadySmall
         ? `✅ HLS ready lesson ${lessonId} (kept ${outMb.toFixed(0)} MB MP4 + adaptive)`
         : `✅ Optimized lesson ${lessonId}: ${sizeMb.toFixed(0)} MB → ${outMb.toFixed(0)} MB` +
             (hlsPrefix ? ' + HLS adaptive' : '')
