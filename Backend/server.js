@@ -18,10 +18,18 @@ const startServer = async () => {
   const coursesRecalculated = await recalculateAllCourses();
   console.log(`📊 Recalculated stats for ${coursesRecalculated} course(s)`);
 
-  if (process.env.VIDEO_OPTIMIZE_EXISTING_ON_STARTUP === 'true') {
-    const { queueAllUnoptimizedVideos } = require('./src/services/videoProcessingService');
-    const result = await queueAllUnoptimizedVideos();
-    console.log(`🎬 Video optimization: ${result.message}`);
+  try {
+    const { resetStuckProcessing, queueAllUnoptimizedVideos } = require('./src/services/videoProcessingService');
+    const stuck = await resetStuckProcessing();
+    if (stuck > 0) console.log(`🎬 Reset ${stuck} lesson(s) stuck in processing`);
+
+    // Off by default — never auto-storm S3 on boot. Enable manually when needed.
+    if (process.env.VIDEO_OPTIMIZE_EXISTING_ON_STARTUP === 'true') {
+      const result = await queueAllUnoptimizedVideos();
+      console.log(`🎬 Video optimization: ${result.message}`);
+    }
+  } catch (err) {
+    console.error('Video processing startup skipped:', err.message);
   }
 
   if (process.env.SMTP_HOST) {

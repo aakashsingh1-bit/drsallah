@@ -16,7 +16,7 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
 
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 25 });
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -25,8 +25,8 @@ const s3 = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
   requestHandler: new NodeHttpHandler({
-    connectionTimeout: 10_000,
-    socketTimeout: 0,
+    connectionTimeout: 60_000,
+    socketTimeout: 300_000,
     httpsAgent,
   }),
   // Disable flexible checksums — they add x-amz-checksum-* query params that

@@ -12,32 +12,25 @@ const queue = [];
 const queued = new Set();
 let workerBusy = false;
 
-const isEnabled = () => process.env.VIDEO_PROCESSING_ENABLED !== 'false';
+const MAX_OPTIMIZE_ATTEMPTS = parseInt(process.env.VIDEO_OPTIMIZE_MAX_ATTEMPTS, 10) || 3;
+
+const isEnabled = () => process.env.VIDEO_PROCESSING_ENABLED === 'true';
 
 const maxHeight = () => parseInt(process.env.VIDEO_MAX_HEIGHT, 10) || 720;
 const maxBitrateKbps = () => parseInt(process.env.VIDEO_MAX_BITRATE_KBPS, 10) || 2500;
 const minSizeToOptimizeMb = () => parseInt(process.env.VIDEO_OPTIMIZE_MIN_SIZE_MB, 10) || 20;
 
+/** Sync — never call S3 HeadObject on the playback hot path */
 const getPlaybackVideoKey = (lesson) => {
   if (!lesson) return null;
   return lesson.streamVideoKey || lesson.videoKey || null;
 };
 
-/** Prefer optimized stream copy; if missing in S3, fall back to original upload. */
-const resolvePlaybackVideoKey = async (lesson) => {
-  if (!lesson) return null;
-  if (lesson.streamVideoKey) {
-    const ok = await s3Service.objectExists(lesson.streamVideoKey);
-    if (ok) return lesson.streamVideoKey;
-    if (lesson._id) {
-      Lesson.findByIdAndUpdate(lesson._id, { $unset: { streamVideoKey: 1 } }).catch(() => {});
-    }
-  }
-  if (lesson.videoKey && (await s3Service.objectExists(lesson.videoKey))) {
-    return lesson.videoKey;
-  }
-  return lesson.videoKey || null;
-};
+/**
+ * Resolve playback key without S3 HEAD round-trips (those were saturating sockets).
+ * Stream endpoint falls back if a key is missing.
+ */
+const resolvePlaybackVideoKey = async (lesson) => getPlaybackVideoKey(lesson);
 
 const streamKeyFor = (sourceKey) => {
   const ext = path.extname(sourceKey) || '.mp4';
@@ -106,9 +99,26 @@ const cleanupFiles = (...files) => {
   }
 };
 
+const backoffMs = (attempts) => {
+  // 15m, 30m, 1h — then stop permanently after MAX
+  const minutes = Math.min(60, 15 * 2 ** Math.max(0, attempts - 1));
+  return minutes * 60 * 1000;
+};
+
+const canAttemptOptimize = (lesson) => {
+  if (!lesson?.videoKey || lesson.streamVideoKey) return false;
+  if (lesson.uploadStatus === 'processing') return false;
+  const attempts = Number(lesson.optimizeAttempts || 0);
+  if (attempts >= MAX_OPTIMIZE_ATTEMPTS) return false;
+  if (lesson.optimizeNextAttemptAt && new Date(lesson.optimizeNextAttemptAt) > new Date()) {
+    return false;
+  }
+  return true;
+};
+
 const optimizeLessonVideo = async (lessonId) => {
   const lesson = await Lesson.findById(lessonId);
-  if (!lesson?.videoKey) return;
+  if (!canAttemptOptimize(lesson)) return;
 
   const tmpDir = path.join(os.tmpdir(), 'drsallah-video');
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -143,12 +153,30 @@ const optimizeLessonVideo = async (lessonId) => {
       streamVideoKey: streamKey,
       uploadStatus: 'ready',
       videoSize: outStats.size,
+      optimizeAttempts: 0,
+      optimizeNextAttemptAt: null,
+      optimizeLastError: null,
     });
 
     console.log(`✅ Video optimized for lesson ${lessonId}`);
   } catch (err) {
-    console.error(`❌ Video optimize failed for lesson ${lessonId}:`, err.message);
-    await Lesson.findByIdAndUpdate(lessonId, { uploadStatus: 'ready' });
+    const attempts = Number(lesson.optimizeAttempts || 0) + 1;
+    const permanentlyDone = attempts >= MAX_OPTIMIZE_ATTEMPTS;
+    const nextAt = permanentlyDone
+      ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+      : new Date(Date.now() + backoffMs(attempts));
+
+    console.error(
+      `❌ Video optimize failed for lesson ${lessonId} (attempt ${attempts}/${MAX_OPTIMIZE_ATTEMPTS}):`,
+      err.message
+    );
+
+    await Lesson.findByIdAndUpdate(lessonId, {
+      uploadStatus: 'ready',
+      optimizeAttempts: attempts,
+      optimizeNextAttemptAt: nextAt,
+      optimizeLastError: String(err.message || err).slice(0, 500),
+    });
   } finally {
     cleanupFiles(inputPath, outputPath);
   }
@@ -163,7 +191,8 @@ const drainQueue = async () => {
   } finally {
     queued.delete(lessonId);
     workerBusy = false;
-    setImmediate(drainQueue);
+    // Space out jobs so S3 sockets recover (avoid connection storms)
+    setTimeout(drainQueue, 2000);
   }
 };
 
@@ -176,16 +205,20 @@ const queueVideoOptimization = (lessonId) => {
   setImmediate(drainQueue);
 };
 
+/**
+ * DO NOT call from playback hot path — that caused infinite retry storms.
+ * Only used after upload / admin batch / explicit queue.
+ */
 const maybeQueueExistingVideo = (lesson) => {
-  if (!lesson?._id || !lesson.videoKey || lesson.streamVideoKey) return;
-  if (lesson.uploadStatus === 'processing') return;
-  // Always optimize legacy uploads (size may be missing on old lessons)
+  if (!isEnabled()) return;
+  if (!canAttemptOptimize(lesson)) return;
   queueVideoOptimization(lesson._id);
 };
 
 const queueAllUnoptimizedVideos = async () => {
   if (!isEnabled()) return { queued: 0, message: 'Video processing disabled' };
 
+  const now = new Date();
   const lessons = await Lesson.find({
     videoKey: { $exists: true, $nin: [null, ''] },
     $or: [
@@ -194,6 +227,21 @@ const queueAllUnoptimizedVideos = async () => {
       { streamVideoKey: '' },
     ],
     uploadStatus: { $ne: 'processing' },
+    $and: [
+      {
+        $or: [
+          { optimizeAttempts: { $exists: false } },
+          { optimizeAttempts: { $lt: MAX_OPTIMIZE_ATTEMPTS } },
+        ],
+      },
+      {
+        $or: [
+          { optimizeNextAttemptAt: { $exists: false } },
+          { optimizeNextAttemptAt: null },
+          { optimizeNextAttemptAt: { $lte: now } },
+        ],
+      },
+    ],
   }).select('_id title');
 
   lessons.forEach((lesson) => queueVideoOptimization(lesson._id));
@@ -202,8 +250,17 @@ const queueAllUnoptimizedVideos = async () => {
     queued: lessons.length,
     message: lessons.length
       ? `Queued ${lessons.length} video(s) for streaming optimization`
-      : 'All videos are already optimized',
+      : 'No videos eligible for optimization right now',
   };
+};
+
+/** Clear lessons stuck in processing after crash/restart */
+const resetStuckProcessing = async () => {
+  const result = await Lesson.updateMany(
+    { uploadStatus: 'processing' },
+    { $set: { uploadStatus: 'ready' } }
+  );
+  return result.modifiedCount || 0;
 };
 
 module.exports = {
@@ -212,4 +269,6 @@ module.exports = {
   queueVideoOptimization,
   maybeQueueExistingVideo,
   queueAllUnoptimizedVideos,
+  resetStuckProcessing,
+  isEnabled,
 };

@@ -22,7 +22,6 @@ const { generatePlaybackToken, verifyPlaybackToken, resolveJwtExpiresIn } = requ
 const {
   resolvePlaybackVideoKey,
   queueVideoOptimization,
-  maybeQueueExistingVideo,
 } = require('../services/videoProcessingService');
 
 // ─── Helper: safe S3 signed URL ───────────────────────────────────────────────
@@ -62,12 +61,12 @@ const buildPlaybackStreamUrl = (lessonId, token, req) => {
   return `${apiBase}${path}`;
 };
 
-/** Returns direct S3 URL + API proxy URL. All clients should use preferredUrl. */
+/** Returns direct S3 URL (fast) + API proxy URL (fallback). Prefer direct for instant play. */
 const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
   const playbackKey = await resolvePlaybackVideoKey(lesson);
   if (!playbackKey) throw new Error('No video uploaded');
 
-  maybeQueueExistingVideo(lesson);
+  // Never queue optimization from playback — that caused an infinite S3 storm
 
   const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(playbackKey, EXPIRY());
   let proxyUrl = null;
@@ -82,7 +81,8 @@ const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
   } catch (err) {
     console.error('Proxy playback token error:', err.message);
   }
-  const preferredUrl = proxyUrl || streamUrl;
+  // Direct S3 = browser talks to S3 (fast). Proxy only if client needs it.
+  const preferredUrl = streamUrl || proxyUrl;
   return { streamUrl, expires, proxyUrl, proxyExpires, preferredUrl };
 };
 

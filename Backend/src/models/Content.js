@@ -72,6 +72,9 @@ const lessonSchema = new mongoose.Schema(
       default: 'none',
     },
     streamVideoKey: { type: String }, // optimized 720p faststart stream
+    optimizeAttempts: { type: Number, default: 0 },
+    optimizeNextAttemptAt: { type: Date, default: null },
+    optimizeLastError: { type: String, default: null },
     isEncrypted: { type: Boolean, default: false },
     drmType: { type: String, enum: ['widevine', 'fairplay', 'aes128', 'none'], default: 'none' },
 

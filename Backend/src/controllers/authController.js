@@ -178,13 +178,23 @@ exports.refreshToken = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Account has been deleted or is inactive' });
   }
 
-  // Rotate refresh token
+  // Rotate refresh token atomically (avoids mongoose VersionError under concurrent refresh)
   const newAccessToken = generateAccessToken(user._id, user.role);
   const newRefreshToken = generateRefreshToken(user._id);
 
-  user.refreshTokens = user.refreshTokens.filter((t) => t !== refreshToken);
-  user.refreshTokens.push(newRefreshToken);
-  await user.save();
+  const updated = await User.findOneAndUpdate(
+    { _id: user._id, refreshTokens: refreshToken },
+    {
+      $pull: { refreshTokens: refreshToken },
+    },
+    { new: true }
+  ).select('+refreshTokens');
+
+  if (!updated) {
+    return res.status(401).json({ success: false, message: 'Refresh token revoked' });
+  }
+
+  await User.findByIdAndUpdate(user._id, { $push: { refreshTokens: newRefreshToken } });
 
   res.json({ success: true, accessToken: newAccessToken, refreshToken: newRefreshToken });
 };
