@@ -1,12 +1,8 @@
-/** Prefer direct S3 (fast). Proxy only as fallback. */
+/** Production playback: always prefer signed S3 URL (preferredUrl / streamUrl). */
 export function getPlaybackSrc(
   data?: { preferredUrl?: string; proxyUrl?: string; streamUrl?: string } | null,
-  preferDirect = false
+  _preferDirect = false
 ) {
   if (!data) return "";
-  // preferDirect or default: streamUrl first for instant play
-  if (preferDirect) {
-    return data.streamUrl || data.preferredUrl || data.proxyUrl || "";
-  }
   return data.preferredUrl || data.streamUrl || data.proxyUrl || "";
 }

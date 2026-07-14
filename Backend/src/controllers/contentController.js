@@ -21,7 +21,7 @@ const { pipeS3VideoToResponse } = require('../services/streamPlaybackService');
 const { generatePlaybackToken, verifyPlaybackToken, resolveJwtExpiresIn } = require('../services/tokenService');
 const {
   resolvePlaybackVideoKey,
-  queueVideoOptimization,
+  queueAfterUpload,
 } = require('../services/videoProcessingService');
 
 // ─── Helper: safe S3 signed URL ───────────────────────────────────────────────
@@ -61,33 +61,30 @@ const buildPlaybackStreamUrl = (lessonId, token, req) => {
   return `${apiBase}${path}`;
 };
 
-/** Returns direct S3 URL (fast) + API proxy URL (fallback). Prefer direct for instant play. */
+/**
+ * Delivery-first playback URLs.
+ * preferredUrl / videoUrl / streamUrl = direct S3 (browser → S3, no API byte proxy).
+ * Optimization never runs here.
+ */
 const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
   const playbackKey = await resolvePlaybackVideoKey(lesson);
   if (!playbackKey) throw new Error('No video uploaded');
 
-  // Never queue optimization from playback — that caused an infinite S3 storm
-
   const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(playbackKey, EXPIRY());
-  let proxyUrl = null;
-  let proxyExpires = null;
-  try {
-    const token = generatePlaybackToken(userId, lesson._id, lesson.course, {
-      isFree: Boolean(options.isFree),
-      isAdmin: Boolean(options.isAdmin),
-    });
-    proxyUrl = buildPlaybackStreamUrl(lesson._id, token, req);
-    proxyExpires = Math.floor(Date.now() / 1000) + PLAYBACK_EXPIRES_SEC();
-  } catch (err) {
-    console.error('Proxy playback token error:', err.message);
-  }
-  // Direct S3 = browser talks to S3 (fast). Proxy only if client needs it.
-  const preferredUrl = streamUrl || proxyUrl;
-  return { streamUrl, expires, proxyUrl, proxyExpires, preferredUrl };
+
+  // Prefer direct S3 for all clients (web / admin / Android) — fastest reliable path
+  return {
+    streamUrl,
+    expires,
+    preferredUrl: streamUrl,
+    proxyUrl: null,
+    proxyExpires: null,
+  };
 };
 
+/** After upload: play immediately; optimize once in background (no loop). */
 const afterVideoUploaded = (lesson) => {
-  if (lesson?._id) queueVideoOptimization(lesson._id);
+  if (lesson?._id) queueAfterUpload(lesson._id);
 };
 
 /** Attach playback URLs to a lesson object (videoUrl = preferredUrl for Android/web compatibility). */
@@ -123,9 +120,9 @@ const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
       isAdmin,
       isFree: useFreeToken,
     });
-    lessonData.videoUrl = urls.preferredUrl || urls.proxyUrl || urls.streamUrl || null;
-    lessonData.preferredUrl = urls.preferredUrl;
-    lessonData.proxyUrl = urls.proxyUrl;
+    lessonData.videoUrl = urls.preferredUrl || urls.streamUrl || null;
+    lessonData.preferredUrl = urls.preferredUrl || urls.streamUrl;
+    lessonData.proxyUrl = urls.proxyUrl || null;
     lessonData.streamUrl = urls.streamUrl;
     lessonData.streamExpires = urls.expires;
     lessonData.proxyExpires = urls.proxyExpires;

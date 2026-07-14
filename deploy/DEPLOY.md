@@ -214,6 +214,22 @@ docker compose up -d api
 
 ---
 
+## Video delivery (permanent model)
+
+**Playback (always):** API returns a signed **S3 URL**. Browser/app loads video from S3 directly — no API byte-streaming, no optimize-on-play.
+
+**After admin upload:** one background optimize job (720p + faststart). Original stays playable immediately. Max 3 attempts then stop.
+
+```env
+VIDEO_PROCESSING_ENABLED=true
+VIDEO_OPTIMIZE_EXISTING_ON_STARTUP=false
+VIDEO_OPTIMIZE_MAX_ATTEMPTS=3
+```
+
+Ensure S3 bucket CORS allows `GET`/`HEAD` from `https://web.drsalahalzait.me` and `https://admin.drsalahalzait.me`.
+
+---
+
 ## Step 10 — Go live checklist
 
 - [ ] DNS A records live
