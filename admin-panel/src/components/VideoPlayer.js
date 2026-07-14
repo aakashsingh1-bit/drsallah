@@ -1,9 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import Hls from 'hls.js';
 import { IconX } from './Icons';
+
+function isHlsUrl(src) {
+  if (!src) return false;
+  return /\.m3u8(\?|$)/i.test(src) || String(src).includes('/hls/');
+}
 
 export default function VideoPlayer({ videoUrl, title, onClose, onRetry }) {
   const [loadError, setLoadError] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const videoRef = useRef(null);
 
   useEffect(() => {
     const handleEsc = (e) => { if (e.key === 'Escape') onClose(); };
@@ -19,6 +26,36 @@ export default function VideoPlayer({ videoUrl, title, onClose, onRetry }) {
     setLoadError(false);
     setRetrying(false);
   }, [videoUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl || loadError) return;
+
+    let hls = null;
+
+    if (isHlsUrl(videoUrl)) {
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = videoUrl;
+      } else if (Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, startLevel: -1, maxBufferLength: 30 });
+        hls.loadSource(videoUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (data.fatal) setLoadError(true);
+        });
+      } else {
+        setLoadError(true);
+      }
+    } else {
+      video.src = videoUrl;
+    }
+
+    return () => {
+      if (hls) hls.destroy();
+      video.removeAttribute('src');
+      video.load();
+    };
+  }, [videoUrl, loadError]);
 
   if (!videoUrl) return null;
 
@@ -76,8 +113,7 @@ export default function VideoPlayer({ videoUrl, title, onClose, onRetry }) {
             </div>
           ) : (
             <video
-              key={videoUrl}
-              src={videoUrl}
+              ref={videoRef}
               controls
               autoPlay
               playsInline
@@ -95,16 +131,8 @@ export default function VideoPlayer({ videoUrl, title, onClose, onRetry }) {
         {/* Footer */}
         <div className="p-3 bg-[#f5f4f0] border-t border-[#e8e6e0] flex items-center justify-between">
           <p className="text-[11px] text-[#6a6f73]">
-            Streamed via platform API for smooth playback
+            Adaptive stream (HLS) when ready · optimized MP4 fallback
           </p>
-          <a
-            href={videoUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11px] text-brand-600 hover:text-brand-700 font-medium"
-          >
-            Open in new tab →
-          </a>
         </div>
       </div>
     </div>

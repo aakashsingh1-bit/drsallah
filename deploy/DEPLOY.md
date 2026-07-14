@@ -214,17 +214,28 @@ docker compose up -d api
 
 ---
 
-## Video delivery (permanent model)
+## Video delivery (YouTube-style adaptive)
 
-**Playback (always):** API returns a signed **S3 URL**. Browser/app loads video from S3 directly — no API byte-streaming, no optimize-on-play.
+**Playback:** API prefers **HLS** (`hlsUrl` → 360p/720p auto bitrate via `hls.js`). Optimized progressive MP4 (`streamUrl`) is the fallback. Tokenized playlist URLs use your existing API domain — no extra CDN required.
 
-**After admin upload:** one background optimize job (720p + faststart). Original stays playable immediately. Max 3 attempts then stop.
+**After admin upload:** one background job builds (1) 720p progressive MP4 and (2) HLS ladder. Max 3 attempts then stop. Never optimizes on every play.
 
 ```env
 VIDEO_PROCESSING_ENABLED=true
+VIDEO_HLS_ENABLED=true
 VIDEO_OPTIMIZE_EXISTING_ON_STARTUP=false
 VIDEO_OPTIMIZE_MAX_ATTEMPTS=3
 ```
+
+After deploy, rebuild old lessons for HLS once:
+
+```bash
+# Admin JWT
+curl -X POST https://api.drsalahalzait.me/api/v1/admin/videos/optimize-all \
+  -H "Authorization: Bearer YOUR_ADMIN_JWT"
+```
+
+Hard-refresh the student web app after deploy so it no longer caches an old HQ stream URL.
 
 Ensure S3 bucket CORS allows `GET`/`HEAD` from `https://web.drsalahalzait.me` and `https://admin.drsalahalzait.me`.
 

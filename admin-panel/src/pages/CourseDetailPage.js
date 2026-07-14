@@ -188,7 +188,15 @@ export default function CourseDetailPage() {
                         <div className="flex items-center gap-2 mt-0.5">
                           <VideoStatusBadge status={les.uploadStatus} videoUrl={les.videoUrl} />
                           {les.duration > 0 && <span className="text-[10px] text-[#9e9e9e] flex items-center gap-1"><IconClock className="w-3 h-3" />{fmt(les.duration)}</span>}
-                          {les.videoSize > 0 && <span className="text-[10px] text-[#9e9e9e]">({(les.videoSize / (1024*1024)).toFixed(1)} MB)</span>}
+                          {les.videoSize > 0 && (
+                            <span className="text-[10px] text-[#9e9e9e]">
+                              ({(les.videoSize / (1024 * 1024)).toFixed(1)} MB
+                              {les.originalVideoSize > les.videoSize
+                                ? ` · was ${(les.originalVideoSize / (1024 * 1024)).toFixed(0)} MB`
+                                : ''}
+                              {les.isAdaptive || les.hlsUrl ? ' · adaptive' : les.isOptimized ? ' · optimized' : ''})
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">

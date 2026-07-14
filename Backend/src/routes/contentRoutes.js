@@ -40,6 +40,7 @@ const {
   getStreamUrl,
   getFreeLessonStream,
   playLessonVideo,
+  serveLessonHls,
   // Security
   reportSecurityEvent,
   // Watch history & bookmarks
@@ -814,6 +815,11 @@ router.get('/lessons/:lessonId/stream', protect, getStreamUrl);
  *       Query param `token` is required (short-lived playback JWT).
  */
 router.get('/lessons/:lessonId/play', playLessonVideo);
+
+/**
+ * Adaptive HLS master / media playlists and .ts segments (playback token required).
+ */
+router.get('/lessons/:lessonId/hls/:asset', serveLessonHls);
 
 /**
  * @openapi

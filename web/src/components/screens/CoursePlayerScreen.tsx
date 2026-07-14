@@ -30,6 +30,7 @@ import {
 } from "@/lib/watchProgress";
 import { getPlaybackSrc } from "@/lib/playback";
 import { toast } from "sonner";
+import AdaptiveVideo from "@/components/AdaptiveVideo";
 
 const CoursePlayerScreen = () => {
   const navigate = useNavigate();
@@ -238,13 +239,13 @@ const CoursePlayerScreen = () => {
   }, [queryClient, activeLessonId, useFreeEndpoint]);
 
   const onVideoError = useCallback(() => {
-    // First failure on proxy → try direct S3 URL once before showing error UI
-    if (!preferDirectStream && streamData?.streamUrl && streamData.streamUrl !== playbackSrc) {
+    // HLS failed → fall back to optimized progressive MP4 once
+    if (!preferDirectStream && streamData?.streamUrl) {
       setPreferDirectStream(true);
       return;
     }
     setVideoLoadError(true);
-  }, [preferDirectStream, streamData?.streamUrl, playbackSrc]);
+  }, [preferDirectStream, streamData?.streamUrl]);
 
   const showPlaybackError = streamError || videoLoadError;
 
@@ -302,14 +303,10 @@ const CoursePlayerScreen = () => {
               </div>
             ) : playbackSrc && !videoLoadError ? (
               <>
-                <video
+                <AdaptiveVideo
                   ref={videoRef}
                   key={playbackSrc}
                   src={playbackSrc}
-                  controls
-                  controlsList="nodownload"
-                  playsInline
-                  preload="auto"
                   className="w-full h-full bg-black"
                   onTimeUpdate={onTimeUpdate}
                   onPause={onPause}
@@ -318,11 +315,15 @@ const CoursePlayerScreen = () => {
                   onPlaying={() => setIsBuffering(false)}
                   onCanPlay={() => setIsBuffering(false)}
                   onError={onVideoError}
-                  onContextMenu={(e) => e.preventDefault()}
                 />
                 {isBuffering && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/30">
                     <Loader2 className="animate-spin text-white w-10 h-10" />
+                  </div>
+                )}
+                {streamData?.optimizing && (
+                  <div className="absolute bottom-3 left-3 right-3 text-[11px] text-white/80 bg-black/50 rounded-lg px-3 py-1.5">
+                    Improving stream quality in background — playback may get smoother shortly.
                   </div>
                 )}
               </>

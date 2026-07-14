@@ -21,7 +21,10 @@ const { pipeS3VideoToResponse } = require('../services/streamPlaybackService');
 const { generatePlaybackToken, verifyPlaybackToken, resolveJwtExpiresIn } = require('../services/tokenService');
 const {
   resolvePlaybackVideoKey,
+  isFullyOptimized,
+  clearDerivedMedia,
   queueAfterUpload,
+  queueIfNeedsStreamingOptimize,
 } = require('../services/videoProcessingService');
 
 // ─── Helper: safe S3 signed URL ───────────────────────────────────────────────
@@ -61,24 +64,86 @@ const buildPlaybackStreamUrl = (lessonId, token, req) => {
   return `${apiBase}${path}`;
 };
 
+const buildHlsMasterUrl = (lessonId, token, req) => {
+  let apiBase = (process.env.API_URL || '').replace(/\/$/, '');
+  if (!apiBase && req) {
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const host = req.get('x-forwarded-host') || req.get('host');
+    if (host) apiBase = `${proto}://${host}`;
+  }
+  if (!apiBase) {
+    throw new Error('API_URL is not configured');
+  }
+  return `${apiBase}/api/v1/lessons/${lessonId}/hls/master.m3u8?token=${encodeURIComponent(token)}`;
+};
+
+const sanitizeHlsAsset = (asset) => {
+  const name = String(asset || '').split('?')[0].replace(/^\/+/, '');
+  if (!name || name.includes('..') || name.includes('/') || name.includes('\\')) {
+    return null;
+  }
+  if (!/^[a-zA-Z0-9._-]+\.(m3u8|ts)$/i.test(name)) return null;
+  return name;
+};
+
+const rewriteHlsPlaylist = (text, lessonId, token, req) => {
+  let apiBase = (process.env.API_URL || '').replace(/\/$/, '');
+  if (!apiBase && req) {
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const host = req.get('x-forwarded-host') || req.get('host');
+    if (host) apiBase = `${proto}://${host}`;
+  }
+  const tok = encodeURIComponent(token);
+  return String(text || '')
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return line;
+      const file = sanitizeHlsAsset(trimmed);
+      if (!file) return line;
+      return `${apiBase}/api/v1/lessons/${lessonId}/hls/${file}?token=${tok}`;
+    })
+    .join('\n');
+};
+
 /**
- * Delivery-first playback URLs.
- * preferredUrl / videoUrl / streamUrl = direct S3 (browser → S3, no API byte proxy).
- * Optimization never runs here.
+ * Delivery-first playback:
+ * - HLS adaptive when ready (YouTube-style bitrate ladder)
+ * - Otherwise signed optimized progressive MP4
+ * - Background optimize once for large / incomplete jobs (not a play loop)
  */
 const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
   const playbackKey = await resolvePlaybackVideoKey(lesson);
   if (!playbackKey) throw new Error('No video uploaded');
 
+  const optimizing = Boolean(
+    !isFullyOptimized(lesson) && queueIfNeedsStreamingOptimize(lesson)
+  );
+
   const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(playbackKey, EXPIRY());
 
-  // Prefer direct S3 for all clients (web / admin / Android) — fastest reliable path
+  let hlsUrl = null;
+  let preferredUrl = streamUrl;
+  if (lesson.hlsPrefix && userId) {
+    const token = generatePlaybackToken(userId, lesson._id, lesson.course, {
+      isFree: Boolean(options.isFree),
+      isAdmin: Boolean(options.isAdmin),
+    });
+    hlsUrl = buildHlsMasterUrl(lesson._id, token, req);
+    preferredUrl = hlsUrl;
+  }
+
   return {
     streamUrl,
     expires,
-    preferredUrl: streamUrl,
+    preferredUrl,
+    hlsUrl,
     proxyUrl: null,
     proxyExpires: null,
+    optimizing,
+    isOptimized: Boolean(lesson.streamVideoKey),
+    isAdaptive: Boolean(lesson.hlsPrefix),
+    playbackVersion: lesson.streamVideoKey || lesson.videoKey || null,
   };
 };
 
@@ -95,12 +160,14 @@ const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
   if (!lessonData.videoKey || !userId) {
     delete lessonData.videoKey;
     delete lessonData.streamVideoKey;
+    delete lessonData.hlsPrefix;
     return;
   }
 
   if (lessonData.isLocked && !lessonData.isFree) {
     delete lessonData.videoKey;
     delete lessonData.streamVideoKey;
+    delete lessonData.hlsPrefix;
     return;
   }
 
@@ -110,6 +177,7 @@ const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
   if (!canPlay) {
     delete lessonData.videoKey;
     delete lessonData.streamVideoKey;
+    delete lessonData.hlsPrefix;
     return;
   }
 
@@ -122,16 +190,23 @@ const attachLessonVideoUrls = async (lessonData, req, options = {}) => {
     });
     lessonData.videoUrl = urls.preferredUrl || urls.streamUrl || null;
     lessonData.preferredUrl = urls.preferredUrl || urls.streamUrl;
+    lessonData.hlsUrl = urls.hlsUrl || null;
     lessonData.proxyUrl = urls.proxyUrl || null;
     lessonData.streamUrl = urls.streamUrl;
     lessonData.streamExpires = urls.expires;
     lessonData.proxyExpires = urls.proxyExpires;
+    lessonData.isOptimized = urls.isOptimized;
+    lessonData.isAdaptive = urls.isAdaptive;
   } catch {
-    lessonData.videoUrl = await safeSignedUrl(lessonData.videoKey, EXPIRY()) || null;
+    lessonData.videoUrl = await safeSignedUrl(
+      lessonData.streamVideoKey || lessonData.videoKey,
+      EXPIRY()
+    ) || null;
   }
 
   delete lessonData.videoKey;
   delete lessonData.streamVideoKey;
+  delete lessonData.hlsPrefix;
 };
 
 const normalizePriceTiers = (value) => {
@@ -846,11 +921,9 @@ exports.deleteLesson = async (req, res) => {
   const lesson = await Lesson.findById(req.params.id);
   if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found' });
 
+  await clearDerivedMedia(lesson);
   if (lesson.videoKey) {
     try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
-  }
-  if (lesson.streamVideoKey && lesson.streamVideoKey !== lesson.videoKey) {
-    try { await s3Service.deleteFromS3(lesson.streamVideoKey); } catch {}
   }
   await Lesson.findByIdAndDelete(req.params.id);
   await recalculateAfterLessonChange(lesson);
@@ -914,6 +987,8 @@ exports.confirmVideoUpload = async (req, res) => {
   existing.uploadStatus = 'ready';
   existing.duration = newDuration;
   existing.streamVideoKey = undefined;
+  existing.hlsPrefix = undefined;
+  existing.originalVideoSize = 0;
   await existing.save();
 
   await recalculateAfterLessonChange(existing);
@@ -933,11 +1008,9 @@ exports.uploadVideoDirectly = async (req, res) => {
   const oldDuration = lesson.duration || 0;
 
   // Delete old video if exists
+  await clearDerivedMedia(lesson);
   if (lesson.videoKey) {
     try { await s3Service.deleteFromS3(lesson.videoKey); } catch {}
-  }
-  if (lesson.streamVideoKey && lesson.streamVideoKey !== lesson.videoKey) {
-    try { await s3Service.deleteFromS3(lesson.streamVideoKey); } catch {}
   }
 
   // req.file comes from s3StreamStorage — already uploaded to S3 via multipart streaming
@@ -951,8 +1024,10 @@ exports.uploadVideoDirectly = async (req, res) => {
   lesson.videoKey = key;
   lesson.uploadStatus = 'ready';
   lesson.videoSize = size;
+  lesson.originalVideoSize = size;
   lesson.duration = newDuration;
   lesson.streamVideoKey = undefined;
+  lesson.hlsPrefix = undefined;
   await lesson.save();
 
   await recalculateAfterLessonChange(lesson);
@@ -1026,6 +1101,7 @@ exports.completeDirectMultipartUpload = async (req, res) => {
     lesson.uploadStatus = 'ready';
     lesson.duration = newDuration;
     lesson.streamVideoKey = undefined;
+    lesson.hlsPrefix = undefined;
     await lesson.save();
 
     await recalculateAfterLessonChange(lesson);
@@ -1333,8 +1409,10 @@ exports.importVideoFromUrl = async (req, res) => {
             lesson.videoKey = key;
             lesson.uploadStatus = 'ready';
             lesson.videoSize = totalBytes;
+            lesson.originalVideoSize = totalBytes;
             lesson.duration = newDuration;
             lesson.streamVideoKey = undefined;
+            lesson.hlsPrefix = undefined;
             await lesson.save();
             await recalculateAfterLessonChange(lesson);
             afterVideoUploaded(lesson);
@@ -1484,6 +1562,92 @@ exports.playLessonVideo = async (req, res) => {
   }
 };
 
+/**
+ * Adaptive HLS (YouTube-style): playlists rewritten with tokenized URLs; segments piped from S3.
+ * GET /lessons/:lessonId/hls/:asset?token=
+ */
+exports.serveLessonHls = async (req, res) => {
+  const { lessonId, asset } = req.params;
+  const token = req.query.token;
+  const safeAsset = sanitizeHlsAsset(asset);
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Playback token required' });
+  }
+  if (!safeAsset) {
+    return res.status(400).json({ success: false, message: 'Invalid HLS asset' });
+  }
+
+  let decoded;
+  try {
+    decoded = verifyPlaybackToken(token);
+  } catch (err) {
+    return res.status(401).json({
+      success: false,
+      message:
+        err.name === 'TokenExpiredError'
+          ? 'Playback session expired. Please reopen the lesson.'
+          : 'Invalid playback token',
+    });
+  }
+
+  if (decoded.lessonId !== lessonId) {
+    return res.status(403).json({ success: false, message: 'Token does not match lesson' });
+  }
+
+  const lesson = await Lesson.findById(lessonId);
+  if (!lesson) {
+    return res.status(404).json({ success: false, message: 'Lesson not found' });
+  }
+  if (!decoded.isAdmin && !lesson.isPublished) {
+    return res.status(404).json({ success: false, message: 'Lesson not found' });
+  }
+  if (!lesson.hlsPrefix) {
+    return res.status(404).json({ success: false, message: 'Adaptive stream not ready yet' });
+  }
+
+  if (decoded.isAdmin) {
+    // ok
+  } else if (decoded.isFree) {
+    if (!lesson.isFree) {
+      return res.status(403).json({ success: false, message: 'This lesson is not free' });
+    }
+  } else {
+    const purchase = await hasActiveCoursePurchase(decoded.id, lesson.course);
+    if (!purchase) {
+      return res.status(403).json({ success: false, message: 'Active course purchase required' });
+    }
+  }
+
+  const key = `${lesson.hlsPrefix}/${safeAsset}`;
+  const isPlaylist = /\.m3u8$/i.test(safeAsset);
+
+  try {
+    if (isPlaylist) {
+      const raw = await s3Service.getObjectText(key);
+      const body = rewriteHlsPlaylist(raw, lessonId, token, req);
+      const origin = req.headers.origin;
+      if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Vary', 'Origin');
+      } else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+      }
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      return res.status(200).send(body);
+    }
+
+    await pipeS3VideoToResponse(key, req, res);
+  } catch (err) {
+    console.error('HLS asset error:', err.message);
+    if (!res.headersSent) {
+      res.status(404).json({ success: false, message: 'HLS segment not found' });
+    }
+  }
+};
+
 // GET /lessons/:lessonId/stream  (requires course purchase)
 exports.getStreamUrl = async (req, res) => {
   const lesson = await Lesson.findById(req.params.lessonId);
@@ -1529,8 +1693,24 @@ exports.getStreamUrl = async (req, res) => {
   let proxyUrl;
   let proxyExpires;
   let preferredUrl;
+  let hlsUrl;
+  let optimizing;
+  let isOptimized;
+  let isAdaptive;
+  let playbackVersion;
   try {
-    ({ streamUrl, expires, proxyUrl, proxyExpires, preferredUrl } = await buildLessonStreamUrls(
+    ({
+      streamUrl,
+      expires,
+      proxyUrl,
+      proxyExpires,
+      preferredUrl,
+      hlsUrl,
+      optimizing,
+      isOptimized,
+      isAdaptive,
+      playbackVersion,
+    } = await buildLessonStreamUrls(
       lesson,
       req,
       userId,
@@ -1556,8 +1736,13 @@ exports.getStreamUrl = async (req, res) => {
       streamUrl,
       proxyUrl,
       preferredUrl,
+      hlsUrl,
       expires,
       proxyExpires,
+      optimizing: Boolean(optimizing),
+      isOptimized: Boolean(isOptimized || lesson.streamVideoKey),
+      isAdaptive: Boolean(isAdaptive || lesson.hlsPrefix),
+      playbackVersion,
       drmType: lesson.drmType,
       lessonTitle: lesson.title,
       duration: lesson.duration,
@@ -1579,8 +1764,24 @@ exports.getFreeLessonStream = async (req, res) => {
   let proxyUrl;
   let proxyExpires;
   let preferredUrl;
+  let hlsUrl;
+  let optimizing;
+  let isOptimized;
+  let isAdaptive;
+  let playbackVersion;
   try {
-    ({ streamUrl, expires, proxyUrl, proxyExpires, preferredUrl } = await buildLessonStreamUrls(
+    ({
+      streamUrl,
+      expires,
+      proxyUrl,
+      proxyExpires,
+      preferredUrl,
+      hlsUrl,
+      optimizing,
+      isOptimized,
+      isAdaptive,
+      playbackVersion,
+    } = await buildLessonStreamUrls(
       lesson,
       req,
       req.user._id,
@@ -1599,8 +1800,13 @@ exports.getFreeLessonStream = async (req, res) => {
       streamUrl,
       proxyUrl,
       preferredUrl,
+      hlsUrl,
       expires,
       proxyExpires,
+      optimizing: Boolean(optimizing),
+      isOptimized: Boolean(isOptimized || lesson.streamVideoKey),
+      isAdaptive: Boolean(isAdaptive || lesson.hlsPrefix),
+      playbackVersion,
       lessonTitle: lesson.title,
       duration: lesson.duration,
       isFree: true,

@@ -2,6 +2,8 @@ const {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
   GetObjectCommand,
   HeadObjectCommand,
   CreateMultipartUploadCommand,
@@ -25,10 +27,11 @@ const s3 = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
   requestHandler: new NodeHttpHandler({
-    connectionTimeout: 60_000,
-    socketTimeout: 300_000,
+    connectionTimeout: 120_000,
+    socketTimeout: 0, // no idle timeout — needed for ~1GB downloads / long streams
     httpsAgent,
   }),
+  maxAttempts: 3,
   // Disable flexible checksums — they add x-amz-checksum-* query params that
   // cause CORS issues when browsers upload directly to S3 via presigned URLs.
   requestChecksumCalculation: 'WHEN_REQUIRED',
@@ -143,7 +146,14 @@ const getPresignedStreamUrl = async (key, expiresIn = 3600) => {
 
 const guessContentType = (key) => {
   const ext = (key || '').split('.').pop()?.toLowerCase();
-  const map = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v' };
+  const map = {
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    mov: 'video/quicktime',
+    m4v: 'video/x-m4v',
+    m3u8: 'application/vnd.apple.mpegurl',
+    ts: 'video/mp2t',
+  };
   return map[ext] || 'video/mp4';
 };
 
@@ -151,6 +161,51 @@ const guessContentType = (key) => {
 const deleteFromS3 = async (key) => {
   const command = new DeleteObjectCommand({ Bucket: BUCKET, Key: key });
   await s3.send(command);
+};
+
+/** Delete all objects under an S3 prefix (HLS folders). */
+const deletePrefix = async (prefix) => {
+  if (!prefix) return;
+  let ContinuationToken;
+  do {
+    const listed = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET,
+        Prefix: prefix.endsWith('/') ? prefix : `${prefix}/`,
+        ContinuationToken,
+      })
+    );
+    const keys = (listed.Contents || []).map((o) => ({ Key: o.Key })).filter((o) => o.Key);
+    if (keys.length) {
+      await s3.send(
+        new DeleteObjectsCommand({
+          Bucket: BUCKET,
+          Delete: { Objects: keys, Quiet: true },
+        })
+      );
+    }
+    ContinuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (ContinuationToken);
+};
+
+/** Upload every file in a local directory flat to s3Prefix/filename. */
+const uploadDirectory = async (localDir, s3Prefix) => {
+  const files = fs.readdirSync(localDir).filter((name) => {
+    const full = path.join(localDir, name);
+    return fs.statSync(full).isFile();
+  });
+  for (const name of files) {
+    const full = path.join(localDir, name);
+    const key = `${s3Prefix}/${name}`;
+    await uploadVideoFromPath(full, key, guessContentType(name));
+  }
+  return { prefix: s3Prefix, count: files.length };
+};
+
+/** Read small S3 object as UTF-8 text (HLS playlists). */
+const getObjectText = async (key) => {
+  const response = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  return response.Body.transformToString('utf-8');
 };
 
 const objectExists = async (key) => {
@@ -290,6 +345,10 @@ module.exports = {
   getPresignedUploadUrl,
   getPresignedStreamUrl,
   deleteFromS3,
+  deletePrefix,
+  uploadDirectory,
+  getObjectText,
+  guessContentType,
   objectExists,
   downloadToFile,
   uploadVideoFromPath,

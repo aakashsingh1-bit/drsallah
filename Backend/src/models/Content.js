@@ -65,13 +65,15 @@ const lessonSchema = new mongoose.Schema(
     videoKey: { type: String },           // S3 object key
     videoBucket: { type: String },        // S3 bucket name
     duration: { type: Number, default: 0 }, // seconds
-    videoSize: { type: Number, default: 0 }, // bytes
+    videoSize: { type: Number, default: 0 }, // bytes of optimized progressive (or original until ready)
+    originalVideoSize: { type: Number, default: 0 }, // bytes of original upload
     uploadStatus: {
       type: String,
       enum: ['none', 'pending', 'uploading', 'processing', 'ready', 'failed'],
       default: 'none',
     },
-    streamVideoKey: { type: String }, // optimized 720p faststart stream
+    streamVideoKey: { type: String }, // optimized 720p faststart progressive fallback
+    hlsPrefix: { type: String }, // S3 prefix for adaptive HLS (master.m3u8 + segments)
     optimizeAttempts: { type: Number, default: 0 },
     optimizeNextAttemptAt: { type: Date, default: null },
     optimizeLastError: { type: String, default: null },

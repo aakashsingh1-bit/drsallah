@@ -1,8 +1,21 @@
-/** Production playback: always prefer signed S3 URL (preferredUrl / streamUrl). */
+/** Prefer HLS adaptive when ready; else optimized progressive S3 URL. */
 export function getPlaybackSrc(
-  data?: { preferredUrl?: string; proxyUrl?: string; streamUrl?: string } | null,
-  _preferDirect = false
+  data?: {
+    hlsUrl?: string;
+    preferredUrl?: string;
+    proxyUrl?: string;
+    streamUrl?: string;
+  } | null,
+  preferProgressive = false
 ) {
   if (!data) return "";
-  return data.preferredUrl || data.streamUrl || data.proxyUrl || "";
+  if (preferProgressive) {
+    return data.streamUrl || data.preferredUrl || data.proxyUrl || "";
+  }
+  return data.hlsUrl || data.preferredUrl || data.streamUrl || data.proxyUrl || "";
+}
+
+export function isHlsUrl(src?: string | null) {
+  if (!src) return false;
+  return /\.m3u8(\?|$)/i.test(src) || src.includes("/hls/");
 }

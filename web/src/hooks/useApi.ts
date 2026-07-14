@@ -191,9 +191,11 @@ export function useGetLessonStream(lessonId?: string, isFree?: boolean) {
       isFree ? courseApi.getFreeLessonStream(lessonId!) : courseApi.getLessonStream(lessonId!),
     enabled: !!lessonId,
     select: (res) => res?.data,
-    staleTime: 50 * 60 * 1000,
-    gcTime: 60 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    // Keep short: after optimize, stale signed/HLS URLs must refresh
+    staleTime: 2 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
     retry: 2,
   });
 }

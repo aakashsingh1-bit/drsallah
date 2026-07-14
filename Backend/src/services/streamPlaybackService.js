@@ -8,8 +8,10 @@ const guessContentType = (key) => {
     webm: 'video/webm',
     mov: 'video/quicktime',
     m4v: 'video/x-m4v',
+    m3u8: 'application/vnd.apple.mpegurl',
+    ts: 'video/mp2t',
   };
-  return map[ext] || 'video/mp4';
+  return map[ext] || 'application/octet-stream';
 };
 
 /**
