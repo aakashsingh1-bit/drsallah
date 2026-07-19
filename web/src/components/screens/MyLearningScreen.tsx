@@ -70,7 +70,11 @@ const MyLearningScreen = () => {
                   transition={{ delay: i * 0.1 }}
                   onClick={() =>
                     navigate(`/course-player/${item.course._id}`, {
-                      state: { course: item.course, lessonId: lastLessonId },
+                      state: {
+                        course: item.course,
+                        lessonId: lastLessonId,
+                        from: "/dashboard/learning",
+                      },
                     })
                   }
                   className="w-full text-left bg-card rounded-2xl border border-border overflow-hidden hover:shadow-lg transition-all"
@@ -124,7 +128,9 @@ const MyLearningScreen = () => {
                   key={`${lessonId}-${entry.watchedAt}`}
                   onClick={() => {
                     if (courseId && lessonId) {
-                      navigate(`/course-player/${courseId}`, { state: { lessonId } });
+                      navigate(`/course-player/${courseId}`, {
+                        state: { lessonId, from: "/dashboard/learning" },
+                      });
                     }
                   }}
                   className="w-full flex items-center gap-3 p-3 bg-card rounded-xl border border-border text-left hover:bg-secondary/30 transition-colors"

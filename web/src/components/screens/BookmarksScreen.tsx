@@ -38,7 +38,7 @@ const BookmarksScreen = () => {
                 const courseId = lesson.course?._id || lesson.course;
                 if (courseId) {
                   navigate(`/course-player/${courseId}`, {
-                    state: { lessonId: lesson._id },
+                    state: { lessonId: lesson._id, from: "/dashboard/bookmarks" },
                   });
                 }
               }}

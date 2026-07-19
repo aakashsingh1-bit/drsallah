@@ -210,6 +210,33 @@ const CoursePlayerScreen = () => {
     if (prev) goToLesson(prev);
   };
 
+  const handleBack = useCallback(() => {
+    try {
+      flushProgress(true);
+    } catch {}
+    try {
+      const v = videoRef.current;
+      if (v) {
+        v.pause();
+      }
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    } catch {}
+
+    const from = (location.state as { from?: string })?.from;
+    if (from && typeof from === "string" && from.startsWith("/")) {
+      navigate(from, { replace: true });
+      return;
+    }
+    // replace so browser Back doesn't bounce into the player again
+    if (hasAccess) {
+      navigate("/dashboard/learning", { replace: true });
+    } else {
+      navigate(`/course-detail/${courseId}`, { replace: true });
+    }
+  }, [flushProgress, location.state, navigate, hasAccess, courseId]);
+
   const handleSubmitReview = () => {
     submitReview(
       { courseId, rating, comment },
@@ -274,7 +301,7 @@ const CoursePlayerScreen = () => {
       <PageHeader
         title={content.title}
         subtitle={`Lesson ${activeIndex + 1} of ${flatLessons.length}`}
-        onBack={() => navigate(hasAccess ? "/dashboard/learning" : `/course-detail/${courseId}`)}
+        onBack={handleBack}
         badge="Now playing"
       />
 

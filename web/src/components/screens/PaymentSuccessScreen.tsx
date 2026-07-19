@@ -33,7 +33,11 @@ const PaymentSuccessScreen = () => {
           <img src={course.thumbnail} alt="" className="w-full h-32 object-cover rounded-2xl mb-6" />
         )}
         <button
-          onClick={() => navigate(`/course-player/${courseId}`, { state: { course } })}
+          onClick={() =>
+            navigate(`/course-player/${courseId}`, {
+              state: { course, from: "/dashboard/learning" },
+            })
+          }
           className="w-full gradient-warm text-accent-foreground py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg"
         >
           Start Learning <ArrowRight size={16} />

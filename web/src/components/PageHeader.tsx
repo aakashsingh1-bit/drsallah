@@ -7,7 +7,11 @@ export const PageHeader = ({onBack, title, badge, subtitle, right}: {onBack: () 
         <>
             <header className="sticky top-0 z-30 bg-card/95 backdrop-blur-sm border-b border-border shadow-sm">
       <div className="max-w-7xl mx-auto px-5 lg:px-8 py-3 flex items-center gap-4">
-        <button onClick={onBack} className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-foreground/70 hover:bg-secondary transition-colors">
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-foreground/70 hover:bg-secondary transition-colors"
+        >
           <ArrowLeft size={16} /> <span className="hidden sm:inline">Back</span>
         </button>
         <div className="h-8 w-px bg-border hidden sm:block" />

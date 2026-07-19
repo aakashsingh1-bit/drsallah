@@ -55,7 +55,9 @@ const CourseDetailScreen = () => {
       navigate(`/purchase-course/${id}`, { state: { course } });
       return;
     }
-    navigate(`/course-player/${id}`, { state: { lessonId: lesson._id, course } });
+    navigate(`/course-player/${id}`, {
+      state: { lessonId: lesson._id, course, from: `/course-detail/${id}` },
+    });
   };
 
   if (isLoading && !course) {
@@ -83,7 +85,7 @@ const CourseDetailScreen = () => {
       <PageHeader
         title={course.title}
         subtitle="Course details"
-        onBack={() => navigate(-1)}
+        onBack={() => navigate("/dashboard/courses", { replace: true })}
         badge=""
         right={
           <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10">
@@ -315,7 +317,11 @@ const CourseDetailScreen = () => {
                       <Award size={16} /> You&apos;re enrolled
                     </div>
                     <button
-                      onClick={() => navigate(`/course-player/${id}`, { state: { course } })}
+                      onClick={() =>
+                        navigate(`/course-player/${id}`, {
+                          state: { course, from: `/course-detail/${id}` },
+                        })
+                      }
                       className="w-full gradient-warm text-accent-foreground py-3.5 rounded-xl font-bold flex items-center justify-center gap-2"
                     >
                       <Play size={16} /> Continue learning

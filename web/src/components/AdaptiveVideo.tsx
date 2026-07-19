@@ -75,12 +75,17 @@ const AdaptiveVideo = forwardRef<HTMLVideoElement, Props>(function AdaptiveVideo
 
     return () => {
       cancelled = true;
+      try {
+        video.pause();
+      } catch {}
       if (hls) {
         hls.destroy();
         hls = null;
       }
-      video.removeAttribute("src");
-      video.load();
+      try {
+        video.removeAttribute("src");
+        video.load();
+      } catch {}
     };
   }, [src]);
 

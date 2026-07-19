@@ -3,10 +3,23 @@ const { Course } = require('../models/Content');
 const { CoursePurchase, CourseReview } = require('../models/CourseAccess');
 const Notification = require('../models/Notification');
 const SecurityLog = require('../models/SecurityLog');
+const s3Service = require('../services/s3Service');
 
 const getStripe = () => {
   if (!process.env.STRIPE_SECRET_KEY) return null;
   return stripeLib(process.env.STRIPE_SECRET_KEY);
+};
+
+const EXPIRY = () => parseInt(process.env.SIGNED_URL_EXPIRY, 10) || 3600;
+
+const safeSignedUrl = async (key) => {
+  if (!key) return null;
+  try {
+    const { streamUrl } = await s3Service.getPresignedStreamUrl(key, EXPIRY());
+    return streamUrl;
+  } catch {
+    return null;
+  }
 };
 
 const addMonths = (date, months) => {
@@ -397,7 +410,19 @@ exports.getMyCoursePurchases = async (req, res) => {
     .populate('course', 'title thumbnail thumbnailKey category')
     .sort({ createdAt: -1 });
 
-  res.json({ success: true, data: purchases });
+  const data = await Promise.all(
+    purchases.map(async (purchase) => {
+      const obj = purchase.toObject();
+      if (obj.course?.thumbnailKey) {
+        obj.course.thumbnail =
+          (await safeSignedUrl(obj.course.thumbnailKey)) || obj.course.thumbnail || null;
+        delete obj.course.thumbnailKey;
+      }
+      return obj;
+    })
+  );
+
+  res.json({ success: true, data });
 };
 
 // ════════════════════════════════════════════════════════════════

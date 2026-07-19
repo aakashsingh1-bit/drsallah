@@ -85,7 +85,7 @@ const HomeScreen = () => {
                 <button
                   key={item.enrollment?.purchaseId}
                   onClick={() =>
-                    navigate(`/course-player/${item.course._id}`, { state: { course: item.course } })
+                    navigate(`/course-player/${item.course._id}`, { state: { course: item.course, from: "/dashboard" } })
                   }
                   className="text-left bg-card rounded-2xl border border-border overflow-hidden hover:shadow-lg transition-all"
                 >
