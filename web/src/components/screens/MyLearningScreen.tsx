@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Play, CheckCircle, Clock, BookOpen, Loader2, Circle } from "lucide-react";
+import { Play, CheckCircle, Clock, Loader2, Circle, BookOpen } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useGetMyLearning, useGetWatchHistory } from "@/hooks/useCoursesHooks";
 import { formatDuration, timeAgo } from "@/lib/format";
@@ -10,52 +10,61 @@ const MyLearningScreen = () => {
   const { data: watchHistory = [] } = useGetWatchHistory();
 
   const enrolled = learningRes?.data || [];
-  const totalCompleted = enrolled.reduce((s: number, e: any) => s + (e.progress?.watchedLessons || 0), 0);
+  const totalCompleted = enrolled.reduce(
+    (s: number, e: any) => s + (e.progress?.watchedLessons || 0),
+    0
+  );
   const inProgress = enrolled.filter((e: any) => {
     const pct = e.progress?.percentComplete || 0;
     return pct > 0 && pct < 100;
   }).length;
 
   return (
-    <div className="pb-4">
-      <div className="gradient-hero px-5 pt-4 pb-5 rounded-b-[2rem]">
-        <h1 className="text-lg font-bold text-primary-foreground mb-1">My Learning</h1>
-        <p className="text-xs text-primary-foreground/70 font-medium mb-4">Track your progress</p>
-        <div className="grid grid-cols-3 gap-2.5">
-          {[
-            { value: String(totalCompleted), label: "Completed", color: "text-accent" },
-            { value: String(inProgress), label: "In Progress", color: "text-primary-foreground" },
-            { value: String(enrolled.length), label: "Enrolled", color: "text-primary-foreground" },
-          ].map((stat, i) => (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: i * 0.1 }}
-              className="bg-primary-foreground/10 backdrop-blur-sm rounded-xl p-3 text-center"
-            >
-              <span className={`text-lg font-extrabold ${stat.color}`}>{stat.value}</span>
-              <p className="text-[10px] text-primary-foreground/60 font-medium">{stat.label}</p>
-            </motion.div>
-          ))}
-        </div>
+    <div className="space-y-6 sm:space-y-8">
+      <div>
+        <h1 className="text-xl sm:text-2xl font-extrabold text-foreground">My Learning</h1>
+        <p className="text-sm text-foreground/55 mt-1">Track progress across your enrolled courses</p>
       </div>
 
-      <div className="px-5 mt-5 mb-5">
-        <h2 className="text-sm font-bold text-foreground mb-3">Enrolled Courses</h2>
+      <section className="grid grid-cols-3 gap-2.5 sm:gap-3">
+        {[
+          { value: String(totalCompleted), label: "Completed", icon: CheckCircle },
+          { value: String(inProgress), label: "In progress", icon: Clock },
+          { value: String(enrolled.length), label: "Enrolled", icon: BookOpen },
+        ].map((stat, i) => (
+          <motion.div
+            key={stat.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+            className="bg-card border border-border rounded-xl sm:rounded-2xl p-3 sm:p-4 text-center"
+          >
+            <stat.icon size={16} className="mx-auto text-primary mb-1.5" />
+            <p className="text-lg sm:text-xl font-extrabold text-foreground leading-none">{stat.value}</p>
+            <p className="text-[10px] sm:text-[11px] text-foreground/45 font-medium mt-1.5">{stat.label}</p>
+          </motion.div>
+        ))}
+      </section>
+
+      <section>
+        <h2 className="text-base sm:text-lg font-bold text-foreground mb-3 sm:mb-4">Enrolled courses</h2>
         {isLoading ? (
           <div className="flex justify-center py-10">
-            <Loader2 className="animate-spin" />
+            <Loader2 className="animate-spin text-primary" />
           </div>
         ) : enrolled.length === 0 ? (
-          <div className="text-center py-10 text-foreground/50 text-sm">
-            No enrolled courses yet.{" "}
-            <button onClick={() => navigate("/dashboard/courses")} className="text-primary font-semibold">
+          <div className="text-center py-12 bg-card border border-border rounded-2xl">
+            <p className="text-sm text-foreground/50 mb-3">No enrolled courses yet.</p>
+            <button
+              type="button"
+              onClick={() => navigate("/dashboard/courses")}
+              className="text-sm font-bold text-primary"
+            >
               Browse courses
             </button>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             {enrolled.map((item: any, i: number) => {
               const pct = item.progress?.percentComplete || 0;
               const lastLessonId =
@@ -65,9 +74,10 @@ const MyLearningScreen = () => {
               return (
                 <motion.button
                   key={item.enrollment?.purchaseId || item.course._id}
-                  initial={{ opacity: 0, y: 20 }}
+                  type="button"
+                  initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.1 }}
+                  transition={{ delay: i * 0.06 }}
                   onClick={() =>
                     navigate(`/course-player/${item.course._id}`, {
                       state: {
@@ -77,34 +87,39 @@ const MyLearningScreen = () => {
                       },
                     })
                   }
-                  className="w-full text-left bg-card rounded-2xl border border-border overflow-hidden hover:shadow-lg transition-all"
+                  className="text-left bg-card rounded-2xl border border-border overflow-hidden hover:shadow-md hover:border-primary/20 transition-all"
                 >
-                  <div className="relative">
-                    <img src={item.course.thumbnail} alt="" className="w-full h-32 object-cover" />
-                    <div className="absolute inset-0 bg-foreground/30 flex items-center justify-center">
-                      <div className="w-14 h-14 rounded-full gradient-warm flex items-center justify-center shadow-xl">
-                        <Play size={22} className="text-accent-foreground ml-0.5" fill="currentColor" />
+                  <div className="relative aspect-[16/9] bg-secondary">
+                    {item.course.thumbnail ? (
+                      <img src={item.course.thumbnail} alt="" className="w-full h-full object-cover" />
+                    ) : null}
+                    <div className="absolute inset-0 bg-gradient-to-t from-foreground/65 via-foreground/15 to-transparent" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-12 h-12 rounded-full bg-accent text-accent-foreground flex items-center justify-center shadow-lg">
+                        <Play size={18} className="ml-0.5" fill="currentColor" />
                       </div>
                     </div>
                     {pct > 0 && pct < 100 && (
-                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">
+                      <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-primary text-primary-foreground text-[10px] font-bold">
                         Continue
                       </span>
                     )}
+                    <span className="absolute bottom-2.5 right-2.5 text-[11px] font-bold text-white bg-foreground/50 backdrop-blur px-2 py-0.5 rounded-md">
+                      {pct}%
+                    </span>
                   </div>
-                  <div className="p-3.5">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <h3 className="text-sm font-bold text-foreground line-clamp-1">{item.course.title}</h3>
-                      <span className="text-xs font-bold text-accent shrink-0 ml-2">{pct}%</span>
+                  <div className="p-3.5 sm:p-4">
+                    <h3 className="text-sm font-bold text-foreground line-clamp-1">{item.course.title}</h3>
+                    <div className="mt-2.5 h-1.5 bg-secondary rounded-full overflow-hidden">
+                      <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
                     </div>
-                    <div className="h-1.5 bg-secondary rounded-full overflow-hidden mb-2">
-                      <div className="h-full gradient-warm rounded-full" style={{ width: `${pct}%` }} />
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-foreground/50">
+                    <div className="flex items-center justify-between text-[11px] text-foreground/45 mt-2 gap-2">
                       <span>
-                        {item.progress?.watchedLessons || 0}/{item.progress?.totalLessons || 0} lessons complete
+                        {item.progress?.watchedLessons || 0}/{item.progress?.totalLessons || 0} lessons
                       </span>
-                      <span>{item.enrollment?.daysRemaining} days left</span>
+                      {item.enrollment?.daysRemaining != null && (
+                        <span className="shrink-0">{item.enrollment.daysRemaining}d left</span>
+                      )}
                     </div>
                   </div>
                 </motion.button>
@@ -112,13 +127,13 @@ const MyLearningScreen = () => {
             })}
           </div>
         )}
-      </div>
+      </section>
 
       {watchHistory.length > 0 && (
-        <div className="px-5">
-          <h2 className="text-sm font-bold text-foreground mb-3">Recent Activity</h2>
+        <section>
+          <h2 className="text-base sm:text-lg font-bold text-foreground mb-3 sm:mb-4">Recent activity</h2>
           <div className="space-y-2">
-            {watchHistory.slice(0, 5).map((entry: any) => {
+            {watchHistory.slice(0, 8).map((entry: any) => {
               const lessonId = entry.lesson?._id || entry.lesson;
               const courseId = entry.lesson?.course;
               const completed = entry.watchProgress?.completed;
@@ -126,6 +141,7 @@ const MyLearningScreen = () => {
               return (
                 <button
                   key={`${lessonId}-${entry.watchedAt}`}
+                  type="button"
                   onClick={() => {
                     if (courseId && lessonId) {
                       navigate(`/course-player/${courseId}`, {
@@ -133,7 +149,7 @@ const MyLearningScreen = () => {
                       });
                     }
                   }}
-                  className="w-full flex items-center gap-3 p-3 bg-card rounded-xl border border-border text-left hover:bg-secondary/30 transition-colors"
+                  className="w-full flex items-center gap-3 p-3 sm:p-3.5 bg-card rounded-xl border border-border text-left hover:bg-secondary/40 transition-colors"
                 >
                   {completed ? (
                     <CheckCircle size={16} className="text-success shrink-0" />
@@ -143,19 +159,22 @@ const MyLearningScreen = () => {
                     <Circle size={16} className="text-foreground/30 shrink-0" />
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{entry.lesson?.title || "Lesson"}</p>
-                    <p className="text-xs text-foreground/50">
-                      {completed ? "Completed" : percent > 0 ? `${percent}% watched` : "Started"} · {timeAgo(entry.watchedAt)}
+                    <p className="text-sm font-semibold text-foreground truncate">
+                      {entry.lesson?.title || "Lesson"}
+                    </p>
+                    <p className="text-[11px] text-foreground/45">
+                      {completed ? "Completed" : percent > 0 ? `${percent}% watched` : "Started"} ·{" "}
+                      {timeAgo(entry.watchedAt)}
                     </p>
                   </div>
-                  <span className="text-xs text-foreground/40 shrink-0">
+                  <span className="text-[11px] text-foreground/40 shrink-0">
                     {formatDuration(entry.watchProgress?.position ?? entry.progress)}
                   </span>
                 </button>
               );
             })}
           </div>
-        </div>
+        </section>
       )}
     </div>
   );
