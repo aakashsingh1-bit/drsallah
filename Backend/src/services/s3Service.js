@@ -18,7 +18,15 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
 
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 25 });
+// Keep-alive with enough sockets for optimize + occasional HLS playlist fetches.
+// Media .ts segments go browser→S3 directly (signed URLs) — do not proxy through API.
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  keepAliveMsecs: 30_000,
+  timeout: 120_000,
+});
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -27,8 +35,8 @@ const s3 = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
   requestHandler: new NodeHttpHandler({
-    connectionTimeout: 120_000,
-    socketTimeout: 0, // no idle timeout — needed for ~1GB downloads / long streams
+    connectionTimeout: 30_000,
+    socketTimeout: 120_000,
     httpsAgent,
   }),
   maxAttempts: 3,

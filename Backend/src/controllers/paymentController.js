@@ -336,9 +336,18 @@ exports.handleStripeWebhook = async (req, res) => {
   let event;
   try {
     const signature = req.headers['stripe-signature'];
+    if (!signature) {
+      console.error('[Webhook] Missing stripe-signature header (bot/probe or wrong URL)');
+      return res.status(400).send('Webhook Error: Missing stripe-signature header');
+    }
+    if (!process.env.STRIPE_WEBHOOK_SECRET) {
+      console.error('[Webhook] STRIPE_WEBHOOK_SECRET is not set');
+      return res.status(500).send('Webhook Error: Server misconfigured');
+    }
     event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
     console.log(`[Webhook] Received event: ${event.type}, ID: ${event.id}`);
   } catch (err) {
+    // Stripe retries failed deliveries for days — fix secret/endpoint once and retries stop.
     console.error(`[Webhook] Signature verification failed: ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }

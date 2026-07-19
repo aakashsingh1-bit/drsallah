@@ -86,7 +86,8 @@ const sanitizeHlsAsset = (asset) => {
   return name;
 };
 
-const rewriteHlsPlaylist = (text, lessonId, token, req) => {
+/** Master playlist: keep child .m3u8 on API (so we can sign segments per variant). */
+const rewriteHlsMasterPlaylist = (text, lessonId, token, req) => {
   let apiBase = (process.env.API_URL || '').replace(/\/$/, '');
   if (!apiBase && req) {
     const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
@@ -104,6 +105,33 @@ const rewriteHlsPlaylist = (text, lessonId, token, req) => {
       return `${apiBase}/api/v1/lessons/${lessonId}/hls/${file}?token=${tok}`;
     })
     .join('\n');
+};
+
+/**
+ * Media playlist: .ts segments → short-lived signed S3 URLs (browser → S3 direct).
+ * Avoids API proxying every segment (was causing daily S3 connection timeouts).
+ */
+const rewriteHlsMediaPlaylist = async (text, hlsPrefix) => {
+  const lines = String(text || '').split('\n');
+  const out = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      out.push(line);
+      continue;
+    }
+    const file = sanitizeHlsAsset(trimmed);
+    if (!file || !/\.ts$/i.test(file)) {
+      out.push(line);
+      continue;
+    }
+    const { streamUrl } = await s3Service.getPresignedStreamUrl(
+      `${hlsPrefix}/${file}`,
+      EXPIRY()
+    );
+    out.push(streamUrl);
+  }
+  return out.join('\n');
 };
 
 /**
@@ -1625,7 +1653,11 @@ exports.serveLessonHls = async (req, res) => {
   try {
     if (isPlaylist) {
       const raw = await s3Service.getObjectText(key);
-      const body = rewriteHlsPlaylist(raw, lessonId, token, req);
+      const isMaster =
+        /master\.m3u8$/i.test(safeAsset) || String(raw).includes('#EXT-X-STREAM-INF');
+      const body = isMaster
+        ? rewriteHlsMasterPlaylist(raw, lessonId, token, req)
+        : await rewriteHlsMediaPlaylist(raw, lesson.hlsPrefix);
       const origin = req.headers.origin;
       if (origin) {
         res.setHeader('Access-Control-Allow-Origin', origin);
@@ -1635,15 +1667,22 @@ exports.serveLessonHls = async (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
       }
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Cache-Control', 'private, max-age=60');
+      res.setHeader('Cache-Control', 'private, max-age=30');
       return res.status(200).send(body);
     }
 
+    // Legacy fallback if a client still requests .ts via API
     await pipeS3VideoToResponse(key, req, res);
   } catch (err) {
     console.error('HLS asset error:', err.message);
     if (!res.headersSent) {
-      res.status(404).json({ success: false, message: 'HLS segment not found' });
+      const isTimeout = /timeout|did not establish a connection/i.test(err.message || '');
+      res.status(isTimeout ? 503 : 404).json({
+        success: false,
+        message: isTimeout
+          ? 'Storage temporarily unreachable. Please retry.'
+          : 'HLS segment not found',
+      });
     }
   }
 };
