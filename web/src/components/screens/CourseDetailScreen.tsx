@@ -83,7 +83,11 @@ const CourseDetailScreen = () => {
       <PageHeader
         title={course.title}
         subtitle="Course details"
-        onBack={() => navigate("/dashboard/courses", { replace: true })}
+        onBack={() => {
+          const from = (location.state as { from?: string })?.from;
+          if (from?.startsWith("/")) navigate(from, { replace: true });
+          else navigate("/dashboard/courses", { replace: true });
+        }}
         badge={hasAccess ? "Enrolled" : undefined}
         right={undefined}
       />

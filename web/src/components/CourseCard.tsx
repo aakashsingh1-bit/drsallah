@@ -40,8 +40,12 @@ export function CourseCard({ course, onClick }: { course: any; onClick: () => vo
         <h3 className="font-bold text-foreground text-[15px] leading-snug line-clamp-2 mb-1.5 min-h-[2.5rem]">
           {course.title}
         </h3>
-        {course.instructor?.name && (
-          <p className="text-xs text-foreground/50 mb-2 truncate">{course.instructor.name}</p>
+        {course.instructor && (
+          <p className="text-xs text-foreground/50 mb-2 truncate">
+            {typeof course.instructor === "string"
+              ? course.instructor
+              : course.instructor?.name}
+          </p>
         )}
         <div className="flex items-center gap-3 text-xs mb-3">
           <span className="flex items-center gap-1 text-amber-600 font-bold">

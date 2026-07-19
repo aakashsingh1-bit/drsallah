@@ -1,3 +1,5 @@
+import { clearAuthSession } from "@/lib/session";
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://api.drsalahalzait.me/api/v1";
 
 async function refreshAccessToken() {
@@ -39,8 +41,7 @@ export async function api(endpoint, options = {}) {
       token = await refreshAccessToken();
       response = await request(token);
     } catch {
-      localStorage.removeItem("eduToken");
-      localStorage.removeItem("eduRefreshToken");
+      clearAuthSession();
       window.location.href = "/login";
       throw new Error("Session expired. Please login again.");
     }

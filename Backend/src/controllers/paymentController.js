@@ -248,13 +248,29 @@ exports.confirmCoursePayment = async (req, res) => {
     return res.status(400).json({ success: false, message: 'paymentIntentId is required' });
   }
 
-  // Find the pending purchase
-  const purchase = await CoursePurchase.findOne({
+  // Find the pending purchase — or already-active (webhook race)
+  let purchase = await CoursePurchase.findOne({
     stripePaymentIntentId: paymentIntentId,
     user: req.user._id,
     status: 'pending',
   });
+
   if (!purchase) {
+    const alreadyActive = await CoursePurchase.findOne({
+      stripePaymentIntentId: paymentIntentId,
+      user: req.user._id,
+      status: 'active',
+    });
+    if (alreadyActive) {
+      return res.json({
+        success: true,
+        data: {
+          purchaseId: alreadyActive._id,
+          endDate: alreadyActive.endDate,
+          alreadyActive: true,
+        },
+      });
+    }
     return res.status(404).json({ success: false, message: 'Purchase not found or already activated' });
   }
 

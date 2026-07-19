@@ -1,13 +1,24 @@
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { CheckCircle, ArrowRight, Sparkles } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useGetCourse } from "@/hooks/useCoursesHooks";
 
 const PaymentSuccessScreen = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const courseId = params.get("courseId") || "";
   const { data: course } = useGetCourse(courseId);
+
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["myLearning"] });
+    queryClient.invalidateQueries({ queryKey: ["purchases"] });
+    if (courseId) {
+      queryClient.invalidateQueries({ queryKey: ["courseContent", courseId] });
+    }
+  }, [queryClient, courseId]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-8 bg-background">

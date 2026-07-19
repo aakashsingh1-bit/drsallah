@@ -40,7 +40,7 @@ export default function WebApp() {
   return (
     <div className="min-h-screen bg-background flex">
       <aside
-        className={`fixed lg:sticky top-0 left-0 h-screen w-64 bg-card border-r border-border z-40 transition-transform ${
+        className={`fixed lg:sticky top-0 left-0 h-screen w-64 bg-card border-r border-border z-40 transition-transform flex flex-col ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
@@ -54,7 +54,7 @@ export default function WebApp() {
           </div>
         </div>
 
-        <nav className="p-3 space-y-1">
+        <nav className="p-3 space-y-1 flex-1 overflow-y-auto pb-24">
           {navItems.map((item) => {
             const active =
               location.pathname === item.path ||
@@ -62,6 +62,7 @@ export default function WebApp() {
             return (
               <button
                 key={item.id}
+                type="button"
                 onClick={() => {
                   setSidebarOpen(false);
                   navigate(item.path);
@@ -82,8 +83,9 @@ export default function WebApp() {
           })}
         </nav>
 
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border">
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border bg-card">
           <button
+            type="button"
             onClick={handleLogout}
             className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-destructive bg-destructive/10 hover:bg-destructive/20"
           >

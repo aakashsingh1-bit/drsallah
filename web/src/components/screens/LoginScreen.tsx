@@ -20,7 +20,7 @@ import {
   useVerifyOtp,
   useResendOtp,
 } from "@/hooks/userAuthHooks";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 
 // interface LoginScreenProps {
@@ -60,6 +60,7 @@ const LoginScreen = () => {
   const [showConfirmPw, setShowConfirmPw] = useState(false);
 
   const navigate = useNavigate();
+  const location = useLocation();
 
   const resetForm = () => {
     setPassword("");
@@ -74,6 +75,11 @@ const LoginScreen = () => {
 
   const goToDashboard = () => {
     resetForm();
+    const from = (location.state as { from?: string } | null)?.from;
+    if (from && typeof from === "string" && from.startsWith("/") && !from.startsWith("/login")) {
+      navigate(from, { replace: true });
+      return;
+    }
     navigate("/dashboard", { replace: true });
   };
   const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
@@ -186,11 +192,15 @@ const LoginScreen = () => {
       { email },
       {
         onSuccess: (response: any) => {
-          if (response?.success) {
-            setUserId(response.userId || response.data?.userId || "");
+          const id = response.userId || response.data?.userId || "";
+          if (id) {
+            setUserId(id);
             setOtp(Array(6).fill(""));
             setScreen("resetPassword");
+            return;
           }
+          // Security: API may hide whether email exists — stay on forgot with success toast from hook
+          toast.message("If that email is registered, a reset code was sent.");
         },
       },
     );
@@ -389,6 +399,7 @@ const LoginScreen = () => {
                         className="w-full bg-secondary rounded-xl pl-10 pr-11 py-3 text-sm text-foreground placeholder:text-foreground/40 outline-none focus:ring-2 focus:ring-primary/30 border border-border"
                       />
                       <button
+                        type="button"
                         onClick={() => setShowPw(!showPw)}
                         className="absolute right-3.5 top-1/2 -translate-y-1/2 text-foreground/40"
                       >
@@ -410,6 +421,7 @@ const LoginScreen = () => {
                   {!isOtp && (
                     <>
                     <button
+                      type="button"
                       className="self-end block ml-auto text-xs text-primary font-semibold mb-5"
                       onClick={() => setScreen("forgot")}
                     >

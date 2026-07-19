@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
-import { ArrowLeft, CreditCard, Loader2, ShieldCheck, Lock } from "lucide-react";
+import { CreditCard, Loader2, ShieldCheck, Lock } from "lucide-react";
 import { PageHeader } from "../PageHeader";
 import { useGetCourse } from "@/hooks/useCoursesHooks";
 import { useCreatePaymentIntent, useConfirmPayment } from "@/hooks/useApi";
@@ -62,10 +62,27 @@ function StripePaymentForm({
       }
 
       if (paymentIntent?.status === "succeeded") {
-        await confirmOnServer({ courseId, paymentIntentId: paymentIntent.id });
+        try {
+          await confirmOnServer({ courseId, paymentIntentId: paymentIntent.id });
+        } catch (confirmErr: any) {
+          const msg = String(confirmErr?.message || "");
+          // Webhook may have activated already — treat as success
+          if (!/already activated|not found/i.test(msg)) {
+            throw confirmErr;
+          }
+        }
         toast.success("Payment successful");
         onSuccess();
+        return;
       }
+
+      if (paymentIntent?.status === "processing") {
+        toast.message("Payment is processing. Access will unlock shortly.");
+        onSuccess();
+        return;
+      }
+
+      toast.error(`Payment status: ${paymentIntent?.status || "unknown"}. Please contact support if charged.`);
     } catch (err: any) {
       toast.error(err?.message || "Payment failed");
     } finally {
@@ -199,14 +216,9 @@ const PaymentScreen = () => {
   return (
     <div className="min-h-screen bg-background">
       <PageHeader
-        right={
-          <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-secondary">
-            <ArrowLeft size={16} />
-          </button>
-        }
         title="Checkout"
         subtitle={`Enrolling in ${course.title}`}
-        onBack={() => navigate(-1)}
+        onBack={() => navigate(`/course-detail/${id}`, { replace: true })}
         badge="Secure Payment"
       />
       <div className="max-w-5xl mx-auto p-5 lg:p-8">
@@ -217,6 +229,11 @@ const PaymentScreen = () => {
                 <div className="bg-card border border-border rounded-2xl p-6">
                   <h2 className="font-bold text-foreground mb-1">Select access plan</h2>
                   <p className="text-xs text-foreground/50 mb-4">Choose how long you want access to this course</p>
+                  {tiers.length === 0 ? (
+                    <p className="text-sm text-foreground/60 py-4">
+                      No purchase plans are available for this course right now. Please contact support.
+                    </p>
+                  ) : (
                   <div className="space-y-3">
                     {tiers.map((tier: any) => (
                       <label
@@ -234,7 +251,7 @@ const PaymentScreen = () => {
                         <CreditCard size={18} className="text-foreground/60" />
                         <div className="flex-1">
                           <span className="text-sm font-semibold block">{tier.months} month(s) full access</span>
-                          <span className="text-xs text-foreground/50">All lessons · Progress tracking · DRM streaming</span>
+                          <span className="text-xs text-foreground/50">All lessons · Progress tracking</span>
                         </div>
                         <span className="font-bold text-primary text-lg">
                           {formatPrice(tier.price, tier.currency)}
@@ -242,6 +259,7 @@ const PaymentScreen = () => {
                       </label>
                     ))}
                   </div>
+                  )}
                 </div>
                 <button
                   disabled={creatingIntent || !selectedTier}
@@ -299,7 +317,9 @@ const PaymentScreen = () => {
             </div>
             <div className="flex items-center gap-2 text-xs text-foreground/50 pt-2">
               <ShieldCheck size={14} className="text-success shrink-0" />
-              <span>30-day access from purchase · Secure DRM streaming</span>
+              <span>
+                {selectedTier?.months || months} month(s) access from purchase · Secure streaming
+              </span>
             </div>
           </div>
         </div>

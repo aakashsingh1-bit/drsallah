@@ -1,7 +1,12 @@
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 export default function ProtectedRoute() {
-  const token = localStorage.getItem("eduToken"); // or from Context/Redux
+  const token = localStorage.getItem("eduToken");
+  const location = useLocation();
 
-  return token ? <Outlet /> : <Navigate to="/login" replace />;
+  if (!token) {
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  }
+
+  return <Outlet />;
 }

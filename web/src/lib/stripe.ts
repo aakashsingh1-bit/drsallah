@@ -7,6 +7,15 @@ export const stripePromise: Promise<Stripe | null> =
 
 export function isStripeConfigured() {
   if (!key) return false;
-  if (key.includes("your_stripe") || key.includes("placeholder")) return false;
-  return key.startsWith("pk_test_") || key.startsWith("pk_live_");
+  const lower = key.toLowerCase();
+  if (
+    lower.includes("your_stripe") ||
+    lower.includes("placeholder") ||
+    lower.includes("your_key") ||
+    lower.includes("changeme") ||
+    lower.includes("xxx")
+  ) {
+    return false;
+  }
+  return (key.startsWith("pk_test_") || key.startsWith("pk_live_")) && key.length > 20;
 }
