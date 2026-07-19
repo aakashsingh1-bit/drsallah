@@ -21,6 +21,7 @@ import {
   useResendOtp,
 } from "@/hooks/userAuthHooks";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 
 // interface LoginScreenProps {
 //   onLogin: () => void;
@@ -73,7 +74,7 @@ const LoginScreen = () => {
 
   const goToDashboard = () => {
     resetForm();
-    navigate("/dashboard");
+    navigate("/dashboard", { replace: true });
   };
   const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -81,7 +82,7 @@ const LoginScreen = () => {
       { email, password },
       {
         onSuccess: (response: any) => {
-          if (response?.success) {
+          if (response?.accessToken || response?.success) {
             goToDashboard();
           }
         },
@@ -107,7 +108,15 @@ const LoginScreen = () => {
   const handleVerifyLoginOtp = () => {
     verifyLoginOtpMutation(
       { email, otp: otp.join("") },
-      { onSuccess: (response: any) => response?.accessToken && goToDashboard() }
+      {
+        onSuccess: (response: any) => {
+          if (response?.accessToken) {
+            goToDashboard();
+            return;
+          }
+          toast.error(response?.message || "Could not start session. Please try again.");
+        },
+      }
     );
   };
 
@@ -116,9 +125,23 @@ const LoginScreen = () => {
       handleVerifyLoginOtp();
       return;
     }
+    if (!userId) {
+      toast.error("Missing account reference. Please register again.");
+      setScreen("signup");
+      return;
+    }
     verifyOtpMutation(
       { otp: otp.join(""), userId },
-      { onSuccess: (response: any) => response?.accessToken && goToDashboard() }
+      {
+        onSuccess: (response: any) => {
+          if (response?.accessToken) {
+            goToDashboard();
+            return;
+          }
+          toast.success("Email verified. Please sign in.");
+          setScreen("login");
+        },
+      }
     );
   };
 

@@ -6,7 +6,6 @@ import {
   Users,
   Play,
   Lock,
-  ShieldCheck,
   BookOpen,
   CheckCircle,
   ChevronDown,
@@ -74,10 +73,9 @@ const CourseDetailScreen = () => {
 
   const includes = [
     `${stats.lessonCount || course.totalLessons} on-demand video lessons`,
-    "DRM protected secure streaming",
     "Watch on mobile, tablet & desktop",
     "Progress tracking & resume playback",
-    stats.freeCount > 0 ? `${stats.freeCount} free preview lesson(s)` : "Lifetime access during enrollment",
+    stats.freeCount > 0 ? `${stats.freeCount} free preview lesson(s)` : "Access during your enrollment period",
   ];
 
   return (
@@ -86,13 +84,8 @@ const CourseDetailScreen = () => {
         title={course.title}
         subtitle="Course details"
         onBack={() => navigate("/dashboard/courses", { replace: true })}
-        badge=""
-        right={
-          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10">
-            <ShieldCheck size={12} className="text-primary" />
-            <span className="text-xs font-bold text-primary">DRM Protected</span>
-          </div>
-        }
+        badge={hasAccess ? "Enrolled" : undefined}
+        right={undefined}
       />
 
       <div className="max-w-6xl mx-auto p-5 lg:p-8">

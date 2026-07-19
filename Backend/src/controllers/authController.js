@@ -112,23 +112,22 @@ exports.verifyOTP = async (req, res) => {
 
   await SecurityLog.create({ user: user._id, event: 'otp_verified', ip: req.ip, details: { type: 'email_verify' } });
 
-  const response = {
-    success: true,
-    message: 'Email verified successfully',
-    user: formatUserResponse(user),
-  };
-
-  if (deviceId) {
-    const login = await completeLogin(user, req, { deviceId, deviceName });
-    if (login.ok) {
-      response.accessToken = login.accessToken;
-      response.refreshToken = login.refreshToken;
-      response.user = login.user;
-      response.message = 'Email verified and logged in successfully';
-    }
+  // Always log the user in after email OTP (web/mobile). deviceId is optional.
+  const login = await completeLogin(user, req, {
+    deviceId: deviceId || `web-${user._id}`,
+    deviceName: deviceName || 'Web Browser',
+  });
+  if (!login.ok) {
+    return res.status(login.status).json({ success: false, message: login.message });
   }
 
-  res.json(response);
+  res.json({
+    success: true,
+    message: 'Email verified and logged in successfully',
+    accessToken: login.accessToken,
+    refreshToken: login.refreshToken,
+    user: login.user,
+  });
 };
 
 // ─── Login ─────────────────────────────────────────────────────────────────────

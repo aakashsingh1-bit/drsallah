@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Loader2, Lock } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useGetCourses } from "@/hooks/useCoursesHooks";
 import { CourseCard } from "@/components/CourseCard";
 
@@ -36,16 +36,6 @@ const CoursesScreen = () => {
         <p className="text-sm text-foreground/60">
           {search ? `Results for "${search}"` : "Explore all available training programs"}
         </p>
-      </div>
-
-      <div className="bg-primary/5 border border-primary/15 rounded-xl p-4 flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
-          <Lock size={16} className="text-primary-foreground" />
-        </div>
-        <div>
-          <p className="text-sm font-bold text-foreground">DRM Protected Content</p>
-          <p className="text-xs text-foreground/60">No downloads · Secure streaming only</p>
-        </div>
       </div>
 
       {categories.length > 1 && (

@@ -28,14 +28,14 @@ const HomeScreen = () => {
       <div className="gradient-hero rounded-3xl p-6 lg:p-8 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 rounded-full bg-accent/10 -translate-y-1/2 translate-x-1/4" />
         <div className="relative z-10">
-          <p className="text-xs text-primary-foreground/70 font-medium mb-1">Welcome back 👋</p>
+          <p className="text-xs text-primary-foreground/70 font-medium mb-1">Welcome back</p>
           <h1 className="text-2xl lg:text-3xl font-extrabold text-primary-foreground mb-2">
             {profile?.name || localStorage.getItem("eduUsername") || "Student"}
           </h1>
           <p className="text-sm text-primary-foreground/80 max-w-xl">
             {enrolled.length
-              ? `You have ${enrolled.length} active course(s) with ${avgProgress}% average progress.`
-              : "Browse courses and start your exam preparation journey."}
+              ? `Continue where you left off — ${enrolled.length} course${enrolled.length > 1 ? "s" : ""} in progress.`
+              : "Browse courses and start learning today."}
           </p>
           <button
             onClick={() => navigate(enrolled.length ? "/dashboard/learning" : "/dashboard/courses")}
