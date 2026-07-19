@@ -594,27 +594,30 @@ const LoginScreen = () => {
                 Forgot password?
               </h2>
               <p className="text-sm text-foreground/60 mb-6">
-                Enter your email and we'll send you a reset link.
+                Enter your email and we'll send you a 6-digit reset code.
               </p>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Email address"
-                className="w-full bg-secondary rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 border border-border mb-4"
-              />
+              <div className="relative mb-5">
+                <Mail
+                  size={16}
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground/40"
+                />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Email address"
+                  className="w-full bg-secondary rounded-xl pl-10 pr-4 py-3 text-sm text-foreground placeholder:text-foreground/40 outline-none focus:ring-2 focus:ring-primary/30 border border-border"
+                />
+              </div>
               <button
-                className="w-full gradient-warm text-accent-foreground py-3.5 rounded-xl text-sm font-bold shadow-lg flex items-center justify-center gap-2"
-                disabled={isForgotPasswordPending}
+                type="button"
                 onClick={handleForgotPassword}
+                disabled={isForgotPasswordPending || !email}
+                className="w-full gradient-warm text-accent-foreground py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-60"
               >
-                {isForgotPasswordPending
-                  ? "Sending reset link..."
-                  : "Send Reset Link"}{" "}
-                <ArrowRight size={16} />
-                {isForgotPasswordPending && (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                )}
+                {isForgotPasswordPending ? "Sending code..." : "Send reset code"}
+                {!isForgotPasswordPending && <ArrowRight size={16} />}
+                {isForgotPasswordPending && <Loader2 className="w-4 h-4 animate-spin" />}
               </button>
             </motion.div>
           </div>
@@ -706,7 +709,7 @@ const LoginScreen = () => {
             </h2>
 
             <p className="text-sm text-foreground/60 mb-8">
-              Enter the 5-digit OTP sent to your email
+              Enter the 6-digit OTP sent to your email
             </p>
 
             <div className="flex justify-center gap-3 mb-8">
