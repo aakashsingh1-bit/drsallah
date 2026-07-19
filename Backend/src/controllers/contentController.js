@@ -86,7 +86,21 @@ const sanitizeHlsAsset = (asset) => {
   return name;
 };
 
-/** Master playlist: keep child .m3u8 on API (so we can sign segments per variant). */
+/** CloudFront (or custom cdn.) base — YouTube-style edge delivery for media bytes */
+const cdnBaseUrl = () => (process.env.CDN_BASE_URL || '').replace(/\/$/, '');
+
+const cdnObjectUrl = (key) => {
+  const base = cdnBaseUrl();
+  if (!base || !key) return null;
+  const path = String(key)
+    .split('/')
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  return `${base}/${path}`;
+};
+
+/** Master playlist: keep child .m3u8 on API (auth + rewrite segments). */
 const rewriteHlsMasterPlaylist = (text, lessonId, token, req) => {
   let apiBase = (process.env.API_URL || '').replace(/\/$/, '');
   if (!apiBase && req) {
@@ -108,8 +122,9 @@ const rewriteHlsMasterPlaylist = (text, lessonId, token, req) => {
 };
 
 /**
- * Media playlist: .ts segments → short-lived signed S3 URLs (browser → S3 direct).
- * Avoids API proxying every segment (was causing daily S3 connection timeouts).
+ * Media playlist segments:
+ * - Prefer CDN (CloudFront) when CDN_BASE_URL is set — edge cache, no API/S3 storm
+ * - Else short-lived signed S3 URLs
  */
 const rewriteHlsMediaPlaylist = async (text, hlsPrefix) => {
   const lines = String(text || '').split('\n');
@@ -125,10 +140,13 @@ const rewriteHlsMediaPlaylist = async (text, hlsPrefix) => {
       out.push(line);
       continue;
     }
-    const { streamUrl } = await s3Service.getPresignedStreamUrl(
-      `${hlsPrefix}/${file}`,
-      EXPIRY()
-    );
+    const key = `${hlsPrefix}/${file}`;
+    const viaCdn = cdnObjectUrl(key);
+    if (viaCdn) {
+      out.push(viaCdn);
+      continue;
+    }
+    const { streamUrl } = await s3Service.getPresignedStreamUrl(key, EXPIRY());
     out.push(streamUrl);
   }
   return out.join('\n');
@@ -136,9 +154,9 @@ const rewriteHlsMediaPlaylist = async (text, hlsPrefix) => {
 
 /**
  * Delivery-first playback:
- * - HLS adaptive when ready (YouTube-style bitrate ladder)
- * - Otherwise signed optimized progressive MP4
- * - Background optimize once for large / incomplete jobs (not a play loop)
+ * - HLS adaptive when ready (YouTube-style)
+ * - Segments via CloudFront when CDN_BASE_URL set
+ * - Optimized progressive MP4 fallback (CDN if configured, else signed S3)
  */
 const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
   const playbackKey = await resolvePlaybackVideoKey(lesson);
@@ -148,7 +166,15 @@ const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
     !isFullyOptimized(lesson) && queueIfNeedsStreamingOptimize(lesson)
   );
 
-  const { streamUrl, expires } = await s3Service.getPresignedStreamUrl(playbackKey, EXPIRY());
+  const viaCdn = cdnObjectUrl(playbackKey);
+  let streamUrl;
+  let expires;
+  if (viaCdn) {
+    streamUrl = viaCdn;
+    expires = Math.floor(Date.now() / 1000) + EXPIRY();
+  } else {
+    ({ streamUrl, expires } = await s3Service.getPresignedStreamUrl(playbackKey, EXPIRY()));
+  }
 
   let hlsUrl = null;
   let preferredUrl = streamUrl;
@@ -172,6 +198,7 @@ const buildLessonStreamUrls = async (lesson, req, userId, options = {}) => {
     isOptimized: Boolean(lesson.streamVideoKey),
     isAdaptive: Boolean(lesson.hlsPrefix),
     playbackVersion: lesson.streamVideoKey || lesson.videoKey || null,
+    cdn: Boolean(cdnBaseUrl()),
   };
 };
 

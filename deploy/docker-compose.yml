@@ -31,6 +31,7 @@ services:
       VIDEO_LARGE_FILE_MB: ${VIDEO_LARGE_FILE_MB:-80}
       VIDEO_OPTIMIZE_EXISTING_ON_STARTUP: ${VIDEO_OPTIMIZE_EXISTING_ON_STARTUP:-false}
       VIDEO_OPTIMIZE_MAX_ATTEMPTS: ${VIDEO_OPTIMIZE_MAX_ATTEMPTS:-3}
+      CDN_BASE_URL: ${CDN_BASE_URL:-}
     depends_on:
       mongodb:
         condition: service_healthy
